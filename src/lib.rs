@@ -1,6 +1,8 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufRead, BufReader, Read, Seek, Write},
+    os::unix::prelude::MetadataExt,
+    path::{Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
@@ -8,7 +10,8 @@ use thiserror::Error;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 struct State {
-    offset: u64,
+    pub offset: u64,
+    pub inode: u64,
 }
 
 #[derive(Error, Debug)]
@@ -27,17 +30,38 @@ impl State {
         Ok(state)
     }
 
-    pub fn persist(&self, file: &mut File) -> Result<(), StateSerdeError> {
+    pub fn persist(&self, file: &mut File) -> std::io::Result<()> {
         file.rewind()?;
-        bincode::serialize_into(file, self)?;
-
+        match bincode::serialize_into(file, self) {
+            Ok(_) => {}
+            Err(e) => match *e {
+                bincode::ErrorKind::Io(ioerr) => return Err(ioerr),
+                _ => unreachable!(),
+            },
+        }
         Ok(())
     }
 }
 
+enum Files {
+    Current {
+        file: BufReader<File>,
+        inode: u64,
+    },
+
+    CurrentAndPrevious {
+        previous: BufReader<File>,
+        previous_inode: u64,
+        previous_size: u64,
+        current: BufReader<File>,
+        current_inode: u64,
+    },
+}
+
 pub struct TrackedReader {
-    file: BufReader<File>,
-    state: State,
+    files: Files,
+    buffer: Vec<u8>,
+    global_offset: u64,
     registry: File,
 }
 
@@ -47,72 +71,202 @@ pub enum TrackedReaderError {
     IO(#[from] std::io::Error),
     #[error("while working with persistent state storage")]
     Persistence(#[from] StateSerdeError),
+    #[error("trying to resolve logrotated file")]
+    RotationResolution(String),
 }
 
 impl TrackedReader {
+    pub fn with_capacity(
+        filepath: &str,
+        registry: &str,
+        capacity: usize,
+    ) -> Result<Self, TrackedReaderError> {
+        let (state, registry) = maybe_read_state(Path::new(registry))?;
+        let files = open_files(PathBuf::from(filepath), state)?;
+
+        Ok(Self {
+            files,
+            buffer: Vec::with_capacity(capacity),
+            global_offset: state.map(|state| state.offset).unwrap_or_default(),
+            registry,
+        })
+    }
+
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        let file = BufReader::new(File::open(filepath)?);
-        let (state, registry) = if std::path::Path::new(registry).exists() {
-            let mut registry = File::options().read(true).write(true).open(registry)?;
-            let state = State::load(&mut registry)?;
-            (state, registry)
-        } else {
-            let state = State { offset: 0 };
-            let mut registry = File::options()
+        Self::with_capacity(filepath, registry, 8 * 1024)
+    }
+
+    fn extract_state(&self) -> State {
+        match &self.files {
+            Files::Current { inode, .. } => State {
+                offset: self.global_offset,
+                inode: *inode,
+            },
+            Files::CurrentAndPrevious {
+                previous_inode,
+                previous_size,
+                current_inode,
+                ..
+            } => {
+                if self.global_offset >= *previous_size {
+                    State {
+                        offset: self.global_offset - previous_size,
+                        inode: *current_inode,
+                    }
+                } else {
+                    State {
+                        offset: self.global_offset,
+                        inode: *previous_inode,
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn maybe_read_state(path: &Path) -> Result<(Option<State>, File), TrackedReaderError> {
+    if !path.exists() {
+        return Ok((
+            None,
+            File::options()
                 .read(true)
                 .write(true)
                 .create_new(true)
-                .open(registry)?;
-
-            // I prefer to fail early
-            state.persist(&mut registry)?;
-            (state, registry)
-        };
-        let mut object = Self {
-            file,
-            state,
-            registry,
-        };
-
-        object.seek(std::io::SeekFrom::Start(state.offset))?;
-
-        Ok(object)
+                .open(path)?,
+        ));
     }
+
+    let mut file = File::options().read(true).write(true).open(path)?;
+    let state = State::load(&mut file)?;
+    Ok((Some(state), file))
+}
+
+fn open_files(path: PathBuf, state: Option<State>) -> Result<Files, TrackedReaderError> {
+    match state {
+        None => {
+            let current_file_meta = std::fs::metadata(&path)?;
+            let reader = BufReader::new(File::open(path)?);
+            Ok(Files::Current {
+                file: reader,
+                inode: current_file_meta.ino(),
+            })
+        }
+        Some(state) => {
+            let current_file_meta = std::fs::metadata(&path)?;
+            let mut current_file = BufReader::new(File::open(&path)?);
+            current_file.seek(std::io::SeekFrom::Start(state.offset))?;
+            if current_file_meta.ino() == state.inode {
+                Ok(Files::Current {
+                    file: current_file,
+                    inode: state.inode,
+                })
+            } else {
+                let older_path = get_rotated_filename(&path);
+                let older_path_meta = std::fs::metadata(&older_path)?;
+
+                if older_path_meta.ino() != state.inode {
+                    return Err(TrackedReaderError::RotationResolution(
+                        "failed to resolve rotated file: previous file's inode does not match"
+                            .to_string(),
+                    ));
+                }
+                let mut older = BufReader::new(File::open(older_path)?);
+                older.seek(std::io::SeekFrom::Start(state.offset))?;
+                Ok(Files::CurrentAndPrevious {
+                    previous: older,
+                    previous_inode: older_path_meta.ino(),
+                    previous_size: older_path_meta.size(),
+                    current: current_file,
+                    current_inode: current_file_meta.ino(),
+                })
+            }
+        }
+    }
+}
+
+fn get_rotated_filename(path: &Path) -> PathBuf {
+    append_ext("1", path.to_path_buf())
+}
+
+pub fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
+    let mut os_string: std::ffi::OsString = path.into();
+    os_string.push(".");
+    os_string.push(ext.as_ref());
+    os_string.into()
 }
 
 impl Read for TrackedReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self.file.read(buf) {
-            Ok(size) => {
-                self.state.offset += size as u64;
-                Ok(size)
+        match &mut self.files {
+            Files::Current { file, .. } => {
+                let read = file.read(buf)?;
+                self.global_offset += read as u64;
+                Ok(read)
             }
-            Err(e) => Err(e),
+            Files::CurrentAndPrevious {
+                previous,
+                previous_inode,
+                previous_size,
+                current,
+                current_inode,
+            } => todo!(),
         }
     }
 }
 
 impl BufRead for TrackedReader {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        self.file.fill_buf()
+        match &mut self.files {
+            Files::Current { file: file, .. } => {
+                let buffer = file.fill_buf()?;
+                self.buffer.clear();
+                self.buffer.write_all(buffer)?;
+                Ok(self.buffer.as_slice())
+            }
+            Files::CurrentAndPrevious {
+                previous, current, ..
+            } => todo!(),
+        }
     }
 
     fn consume(&mut self, amt: usize) {
-        self.file.consume(amt);
-        self.state.offset += amt as u64;
+        match &mut self.files {
+            Files::Current { file: file, .. } => {
+                file.consume(amt);
+                self.global_offset += amt as u64;
+            }
+            Files::CurrentAndPrevious {
+                previous,
+                previous_inode,
+                previous_size,
+                current,
+                current_inode,
+            } => todo!(),
+        }
     }
 }
 
 impl Seek for TrackedReader {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let offset_from_start = self.file.seek(pos)?;
-        self.state.offset = offset_from_start;
-        Ok(offset_from_start)
+        match &mut self.files {
+            Files::Current { file, .. } => {
+                let new_pos = file.seek(pos)?;
+                self.global_offset = new_pos;
+                Ok(new_pos)
+            }
+            Files::CurrentAndPrevious {
+                previous,
+                previous_inode,
+                previous_size,
+                current,
+                current_inode,
+            } => todo!(),
+        }
     }
 }
 
 impl Drop for TrackedReader {
     fn drop(&mut self) {
-        self.state.persist(&mut self.registry).unwrap();
+        self.extract_state().persist(&mut self.registry).unwrap();
     }
 }
