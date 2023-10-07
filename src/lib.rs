@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Seek, Write},
+    io::{BufRead, BufReader, Read, Seek},
     os::unix::prelude::MetadataExt,
     path::{Path, PathBuf},
 };
@@ -60,7 +60,6 @@ enum Files {
 
 pub struct TrackedReader {
     files: Files,
-    buffer: Vec<u8>,
     global_offset: u64,
     registry: File,
 }
@@ -76,24 +75,21 @@ pub enum TrackedReaderError {
 }
 
 impl TrackedReader {
-    pub fn with_capacity(
-        filepath: &str,
-        registry: &str,
-        capacity: usize,
-    ) -> Result<Self, TrackedReaderError> {
+    pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
         let (state, registry) = maybe_read_state(Path::new(registry))?;
         let files = open_files(PathBuf::from(filepath), state)?;
-
-        Ok(Self {
+        let initial_offset = state.map(|state| state.offset).unwrap_or_default();
+        let mut reader = Self {
             files,
-            buffer: Vec::with_capacity(capacity),
-            global_offset: state.map(|state| state.offset).unwrap_or_default(),
+            global_offset: initial_offset,
             registry,
-        })
+        };
+        reader.seek(std::io::SeekFrom::Start(initial_offset))?;
+        Ok(reader)
     }
 
-    pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        Self::with_capacity(filepath, registry, 8 * 1024)
+    fn persist(&mut self) -> std::io::Result<()> {
+        self.extract_state().persist(&mut self.registry)
     }
 
     fn extract_state(&self) -> State {
@@ -170,8 +166,7 @@ fn open_files(path: PathBuf, state: Option<State>) -> Result<Files, TrackedReade
                             .to_string(),
                     ));
                 }
-                let mut older = BufReader::new(File::open(older_path)?);
-                older.seek(std::io::SeekFrom::Start(state.offset))?;
+                let older = BufReader::new(File::open(older_path)?);
                 Ok(Files::CurrentAndPrevious {
                     previous: older,
                     previous_inode: older_path_meta.ino(),
@@ -205,11 +200,19 @@ impl Read for TrackedReader {
             }
             Files::CurrentAndPrevious {
                 previous,
-                previous_inode,
                 previous_size,
                 current,
-                current_inode,
-            } => todo!(),
+                ..
+            } => {
+                // because we read forward, we can use current offset to determine file we are in
+                let read = if self.global_offset < *previous_size {
+                    previous.read(buf)?
+                } else {
+                    current.read(buf)?
+                };
+                self.global_offset += read as u64;
+                Ok(read)
+            }
         }
     }
 }
@@ -217,31 +220,48 @@ impl Read for TrackedReader {
 impl BufRead for TrackedReader {
     fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
         match &mut self.files {
-            Files::Current { file: file, .. } => {
-                let buffer = file.fill_buf()?;
-                self.buffer.clear();
-                self.buffer.write_all(buffer)?;
-                Ok(self.buffer.as_slice())
-            }
+            Files::Current { file, .. } => file.fill_buf(),
             Files::CurrentAndPrevious {
-                previous, current, ..
-            } => todo!(),
+                previous,
+                current,
+                previous_size,
+                ..
+            } => {
+                // firstly, we determine if we are reading from the first or the second file
+                if self.global_offset < *previous_size {
+                    // then we can simply ask appropriate file to fill the buffer
+                    //
+                    // previous file is not over yet because we've read less than size and we trust
+                    // that previous file won't change
+                    previous.fill_buf()
+                } else {
+                    current.fill_buf()
+                }
+                // because of consume, we will shift file pointer into correct location
+            }
         }
     }
 
     fn consume(&mut self, amt: usize) {
         match &mut self.files {
-            Files::Current { file: file, .. } => {
+            Files::Current { file, .. } => {
                 file.consume(amt);
                 self.global_offset += amt as u64;
             }
             Files::CurrentAndPrevious {
                 previous,
-                previous_inode,
                 previous_size,
                 current,
-                current_inode,
-            } => todo!(),
+                ..
+            } => {
+                // the proper file returned some nonzero buf result, so we just need to forward `amt` to it
+                if self.global_offset < *previous_size {
+                    previous.consume(amt);
+                } else {
+                    current.consume(amt)
+                }
+                self.global_offset += amt as u64;
+            }
         }
     }
 }
@@ -256,17 +276,47 @@ impl Seek for TrackedReader {
             }
             Files::CurrentAndPrevious {
                 previous,
-                previous_inode,
                 previous_size,
                 current,
-                current_inode,
-            } => todo!(),
+                ..
+            } => match pos {
+                std::io::SeekFrom::Start(offset) => {
+                    let previous_size = *previous_size;
+                    self.global_offset = offset;
+                    if offset > previous_size {
+                        let offset_in_new =
+                            current.seek(std::io::SeekFrom::Start(offset - previous_size))?;
+                        Ok(previous_size + offset_in_new)
+                    } else {
+                        // here we seek both files - because we initially read from the first one,
+                        // second should also be reset to read from start when we get here
+                        current.rewind()?;
+                        previous.seek(pos)
+                    }
+                }
+                std::io::SeekFrom::Current(offset) => {
+                    let new_position = self.global_offset as i64 + offset;
+                    if new_position < 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "negative real offset after seek",
+                        ));
+                    }
+                    let new_position = new_position as u64;
+                    self.seek(std::io::SeekFrom::Start(new_position))
+                }
+                std::io::SeekFrom::End(_) => {
+                    //TODO rewrite this - currently it only works when position is in bounds of second file
+                    let bytes_from_start = current.seek(pos)?;
+                    Ok(*previous_size + bytes_from_start)
+                }
+            },
         }
     }
 }
 
 impl Drop for TrackedReader {
     fn drop(&mut self) {
-        self.extract_state().persist(&mut self.registry).unwrap();
+        self.persist().unwrap();
     }
 }
