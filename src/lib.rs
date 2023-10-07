@@ -88,7 +88,7 @@ impl TrackedReader {
         Ok(reader)
     }
 
-    fn persist(&mut self) -> std::io::Result<()> {
+    pub fn persist(&mut self) -> std::io::Result<()> {
         self.extract_state().persist(&mut self.registry)
     }
 
