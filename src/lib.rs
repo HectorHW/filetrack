@@ -16,7 +16,7 @@ pub enum StateSerdeError {
     #[error("while working with underlying file")]
     IO(#[from] std::io::Error),
 
-    #[error("")]
+    #[error("while trying to (de)serialize state")]
     Serde(#[from] bincode::Error),
 }
 
