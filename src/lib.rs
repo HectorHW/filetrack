@@ -51,7 +51,7 @@ pub enum TrackedReaderError {
 
 impl TrackedReader {
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        let mut file = BufReader::new(File::open(filepath)?);
+        let file = BufReader::new(File::open(filepath)?);
         let (state, registry) = if std::path::Path::new(registry).exists() {
             let mut registry = File::options().read(true).write(true).open(registry)?;
             let state = State::load(&mut registry)?;
@@ -64,16 +64,19 @@ impl TrackedReader {
                 .create_new(true)
                 .open(registry)?;
 
+            // I prefer to fail early
             state.persist(&mut registry)?;
             (state, registry)
         };
-        file.seek(std::io::SeekFrom::Start(state.offset))?;
-
-        Ok(Self {
+        let mut object = Self {
             file,
             state,
             registry,
-        })
+        };
+
+        object.seek(std::io::SeekFrom::Start(state.offset))?;
+
+        Ok(object)
     }
 }
 
@@ -97,6 +100,14 @@ impl BufRead for TrackedReader {
     fn consume(&mut self, amt: usize) {
         self.file.consume(amt);
         self.state.offset += amt as u64;
+    }
+}
+
+impl Seek for TrackedReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let offset_from_start = self.file.seek(pos)?;
+        self.state.offset = offset_from_start;
+        Ok(offset_from_start)
     }
 }
 
