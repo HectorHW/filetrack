@@ -62,6 +62,7 @@ enum Files {
 }
 
 /// Structure that implements `Read`, `ReadBuf` and `Seek` while working with persistent offset in up to two underlying files.
+/// External file is used to persist offset across restarts.
 ///
 /// ## Cleanup
 ///
@@ -89,11 +90,12 @@ pub enum TrackedReaderError {
 }
 
 impl TrackedReader {
-    /// Creates a new `TrackedReader` possibly loading current offset from a registry file
+    /// Creates a new `TrackedReader` possibly loading current offset from a registry file. On a first execution registry file most
+    /// likely will not exist and in that case it will be created with zero offset.
     ///
     /// # Arguments
     ///
-    /// * `filepath` - a path to log file to be read. TrackedReader will additionally search for logrotated file under `{filepath}.1`
+    /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`
     /// * `registry` - path to registry file used to persist offset and other metadata
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
         let (state, registry) = maybe_read_state(Path::new(registry))?;
