@@ -62,6 +62,7 @@ pub struct TrackedReader {
     files: Files,
     global_offset: u64,
     registry: File,
+    already_freed: bool,
 }
 
 #[derive(Error, Debug)]
@@ -83,6 +84,7 @@ impl TrackedReader {
             files,
             global_offset: initial_offset,
             registry,
+            already_freed: false,
         };
         reader.seek(std::io::SeekFrom::Start(initial_offset))?;
         Ok(reader)
@@ -90,6 +92,12 @@ impl TrackedReader {
 
     pub fn persist(&mut self) -> std::io::Result<()> {
         self.extract_state().persist(&mut self.registry)
+    }
+
+    pub fn close(mut self) -> std::io::Result<()> {
+        self.persist()?;
+        self.already_freed = true;
+        Ok(())
     }
 
     fn extract_state(&self) -> State {
@@ -317,6 +325,8 @@ impl Seek for TrackedReader {
 
 impl Drop for TrackedReader {
     fn drop(&mut self) {
-        self.persist().unwrap();
+        if !self.already_freed {
+            self.persist().unwrap()
+        }
     }
 }
