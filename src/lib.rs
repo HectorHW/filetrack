@@ -98,11 +98,13 @@ impl TrackedReader {
     /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`
     /// * `registry` - path to registry file used to persist offset and other metadata
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        let (state_from_disk, registry) = maybe_read_state(Path::new(registry))?;
+        let state_from_disk = maybe_read_state(Path::new(registry))?;
         let files = open_files(PathBuf::from(filepath), state_from_disk)?;
         let initial_offset = state_from_disk
             .map(|state| state.offset)
             .unwrap_or_default();
+        // now that we know that open_files did not fail, we can create registry file
+        let registry = open_state_file(registry)?;
         let mut reader = Self {
             files,
             global_offset: initial_offset,
@@ -111,7 +113,7 @@ impl TrackedReader {
         };
         reader.seek(std::io::SeekFrom::Start(initial_offset))?;
         // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
-        // This will make struct work correctly even if close/Drop will never be happen (eg in case of mem::forget).
+        // This will make struct work correctly even if close/Drop will never happen (eg in case of mem::forget).
         if state_from_disk.is_none() {
             reader.persist()?;
         }
@@ -158,21 +160,14 @@ impl TrackedReader {
     }
 }
 
-fn maybe_read_state(path: &Path) -> Result<(Option<State>, File), TrackedReaderError> {
+fn maybe_read_state(path: &Path) -> Result<Option<State>, TrackedReaderError> {
     if !path.exists() {
-        return Ok((
-            None,
-            File::options()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(path)?,
-        ));
+        return Ok(None);
     }
 
-    let mut file = File::options().read(true).write(true).open(path)?;
+    let mut file = File::options().read(true).open(path)?;
     let state = State::load(&mut file)?;
-    Ok((Some(state), file))
+    Ok(Some(state))
 }
 
 fn open_files(path: PathBuf, state: Option<State>) -> Result<Files, TrackedReaderError> {
@@ -226,6 +221,14 @@ fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
     os_string.push(".");
     os_string.push(ext.as_ref());
     os_string.into()
+}
+
+fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
+    File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(path)
 }
 
 impl Read for TrackedReader {
