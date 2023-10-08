@@ -97,9 +97,12 @@ impl TrackedReader {
     ///
     /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`
     /// * `registry` - path to registry file used to persist offset and other metadata
-    pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        let state_from_disk = maybe_read_state(Path::new(registry))?;
-        let files = open_files(PathBuf::from(filepath), state_from_disk)?;
+    pub fn new(
+        filepath: impl AsRef<Path>,
+        registry: impl AsRef<Path>,
+    ) -> Result<Self, TrackedReaderError> {
+        let state_from_disk = maybe_read_state(registry.as_ref())?;
+        let files = open_files(PathBuf::from(filepath.as_ref()), state_from_disk)?;
         let initial_offset = state_from_disk
             .map(|state| state.offset)
             .unwrap_or_default();
