@@ -1,12 +1,12 @@
-# filetrack
+# Filetrack
 
-Filetrack is a library for persistent reading of logs similar to the mechanisms used in Filebeat and other similar software.
-It's main intention is to be used for implementation of custom log processors.
+Filetrack is a library for persistent reading of logs similar to the mechanisms used in Filebeat and other software alike.
+Its main intention is to be used for implementation of custom log processors.
 
 ## Usage
 
-Instantiate `TrackedReader` by passing it a path to logfile intended for reading as well as a path to file used as registry for persistent
-offset storage.
+Instantiate `TrackedReader` by passing it a path to logfile intended for reading as well as a path to file used as a registry for
+persistent offset storage.
 
 ```rust
 fn main() -> Result<(), anyhow::Error> {
@@ -39,6 +39,6 @@ buffered reading and seeking in up to two files.
 example, it should be run frequently enough to keep up with logs that are written and rotated.
 
 * Due to simple scheme of persistence, we cannot seek back into rotated file version after saving state while reading from current
-log file. This means that if your program must do some conditional seeking in file, you should perform any pointer rollback before
+log file. This means that if your program must do some conditional seeking in a file, you should perform any pointer rollback before
 performing final save (done by `.close()` or Drop). Overall, this library is intended to be used for mostly forward reading of
 log files.
