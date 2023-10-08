@@ -313,10 +313,18 @@ impl Seek for TrackedReader {
                     let new_position = new_position as u64;
                     self.seek(std::io::SeekFrom::Start(new_position))
                 }
-                std::io::SeekFrom::End(_) => {
-                    //TODO rewrite this - currently it only works when position is in bounds of second file
-                    let bytes_from_start = current.seek(pos)?;
-                    Ok(*previous_size + bytes_from_start)
+                std::io::SeekFrom::End(offset) => {
+                    //lets suppose that both files do not change for the duration of seek
+                    let current_file_size = current.seek(std::io::SeekFrom::End(0))?;
+                    let total_offset = (*previous_size + current_file_size) as i64 + offset;
+                    if total_offset < 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "negative real offset after seek",
+                        ));
+                    }
+                    let total_offset = total_offset as u64;
+                    self.seek(std::io::SeekFrom::Start(total_offset))
                 }
             },
         }
