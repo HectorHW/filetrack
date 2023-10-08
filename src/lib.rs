@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read, Seek},
@@ -14,6 +16,7 @@ struct State {
     pub inode: u64,
 }
 
+/// possible errors that could happen while working with persistent state storage
 #[derive(Error, Debug)]
 pub enum StateSerdeError {
     #[error("while working with underlying file")]
@@ -58,6 +61,15 @@ enum Files {
     },
 }
 
+/// Structure that implements `Read`, `ReadBuf` and `Seek` while working with persistent offset in up to two underlying files.
+///
+/// ## Cleanup
+///
+/// There are two distinct ways to perform cleanup for this structure:
+///
+/// * **explicit** by calling `.close()`. This will allow you to handle any errors that may happen in the process
+/// * **implicitly** by relying on `Drop`. Note that errors generated while working with the filesystem cannot be handled and will
+/// cause a panic in this case.
 pub struct TrackedReader {
     files: Files,
     global_offset: u64,
@@ -65,6 +77,7 @@ pub struct TrackedReader {
     already_freed: bool,
 }
 
+/// possible errors that could happen while working with `TrackedReader`
 #[derive(Error, Debug)]
 pub enum TrackedReaderError {
     #[error("while working with underlying file")]
@@ -76,6 +89,12 @@ pub enum TrackedReaderError {
 }
 
 impl TrackedReader {
+    /// Creates a new `TrackedReader` possibly loading current offset from a registry file
+    ///
+    /// # Arguments
+    ///
+    /// * `filepath` - a path to log file to be read. TrackedReader will additionally search for logrotated file under `{filepath}.1`
+    /// * `registry` - path to registry file used to persist offset and other metadata
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
         let (state, registry) = maybe_read_state(Path::new(registry))?;
         let files = open_files(PathBuf::from(filepath), state)?;
@@ -90,10 +109,12 @@ impl TrackedReader {
         Ok(reader)
     }
 
+    /// Explicitly save current state into registry file and return any errors generated
     pub fn persist(&mut self) -> std::io::Result<()> {
         self.extract_state().persist(&mut self.registry)
     }
 
+    /// Explicitly finalize structure, returning any errors that were produced in the process. Alternative to relying on `Drop`.
     pub fn close(mut self) -> std::io::Result<()> {
         self.persist()?;
         self.already_freed = true;
@@ -191,7 +212,7 @@ fn get_rotated_filename(path: &Path) -> PathBuf {
     append_ext("1", path.to_path_buf())
 }
 
-pub fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
+fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
     let mut os_string: std::ffi::OsString = path.into();
     os_string.push(".");
     os_string.push(ext.as_ref());
@@ -331,6 +352,8 @@ impl Seek for TrackedReader {
     }
 }
 
+/// Executes destructor. If `.close()` was not called previously, will write state to disk, possibly panicking if any error happens.
+/// If panic is not what you want, use `.close()` and handle errors manually instead.
 impl Drop for TrackedReader {
     fn drop(&mut self) {
         if !self.already_freed {
