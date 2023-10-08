@@ -98,9 +98,11 @@ impl TrackedReader {
     /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`
     /// * `registry` - path to registry file used to persist offset and other metadata
     pub fn new(filepath: &str, registry: &str) -> Result<Self, TrackedReaderError> {
-        let (state, registry) = maybe_read_state(Path::new(registry))?;
-        let files = open_files(PathBuf::from(filepath), state)?;
-        let initial_offset = state.map(|state| state.offset).unwrap_or_default();
+        let (state_from_disk, registry) = maybe_read_state(Path::new(registry))?;
+        let files = open_files(PathBuf::from(filepath), state_from_disk)?;
+        let initial_offset = state_from_disk
+            .map(|state| state.offset)
+            .unwrap_or_default();
         let mut reader = Self {
             files,
             global_offset: initial_offset,
@@ -108,6 +110,11 @@ impl TrackedReader {
             already_freed: false,
         };
         reader.seek(std::io::SeekFrom::Start(initial_offset))?;
+        // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
+        // This will make struct work correctly even if close/Drop will never be happen (eg in case of mem::forget).
+        if state_from_disk.is_none() {
+            reader.persist()?;
+        }
         Ok(reader)
     }
 
