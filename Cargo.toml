@@ -2,6 +2,12 @@
 name = "filetrack"
 version = "0.1.0"
 edition = "2021"
+description = "a library for persistent reading of logs"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/HectorHW/filetrack"
+documentation = "https://docs.rs/filetrack"
+authors = ["Vladimir Redkin (@HectorHW)"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
