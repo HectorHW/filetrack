@@ -11,14 +11,14 @@ use thiserror::Error;
 
 use crate::Multireader;
 
-/// structure used to store state of `TrackedReader`
+/// Structure used to store state of `TrackedReader`
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct State {
     pub offset: u64,
     pub inode: u64,
 }
 
-/// possible errors that could happen while working with persistent state storage
+/// Possible errors that could happen while working with persistent state storage
 #[derive(Error, Debug)]
 pub enum StateSerdeError {
     #[error("while working with underlying file")]
@@ -102,7 +102,7 @@ pub struct TrackedReader {
     already_freed: bool,
 }
 
-/// possible errors that could happen while working with `TrackedReader`
+/// Possible errors that could happen while working with `TrackedReader`
 #[derive(Error, Debug)]
 pub enum TrackedReaderError {
     #[error("while working with underlying file")]

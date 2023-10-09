@@ -41,9 +41,9 @@ pub struct Multireader<R: Seek> {
 }
 
 impl<R: Seek> Multireader<R> {
-    /// create a Multireader from a nonempty collection of readers
+    /// Create a Multireader from a nonempty collection of readers
     ///
-    /// this function returns io::Result because it will use seek to determine sizes which can fail
+    /// This function returns io::Result because it will use seek to determine sizes which can fail
     pub fn new(mut items: Vec<R>) -> io::Result<Self> {
         assert_ne!(
             items.len(),
@@ -61,12 +61,12 @@ impl<R: Seek> Multireader<R> {
         })
     }
 
-    /// offset amoung all underlying items
+    /// Offset amoung all underlying items
     pub fn get_global_offset(&self) -> u64 {
         self.global_offset
     }
 
-    /// offset inside current item
+    /// Offset inside current item
     pub fn get_local_offset(&self) -> u64 {
         let item_index = self.get_current_item_index();
         if item_index == 0 {
@@ -77,7 +77,7 @@ impl<R: Seek> Multireader<R> {
 
     //we do not have is_empty because, well, this reader cannot be empty
     #[allow(clippy::len_without_is_empty)]
-    /// number of underlying items
+    /// Number of underlying items
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -95,12 +95,12 @@ impl<R: Seek> Multireader<R> {
         rightmost_index
     }
 
-    /// destroy the struct and return underlying readers
+    /// Destroy the struct and return underlying readers
     pub fn into_inner(self) -> Vec<R> {
         self.items
     }
 
-    /// get total size of underlying items
+    /// Get total size of underlying items
     ///
     /// Computes total size of underlying items. This method requires mut ref and returns io::Result
     /// because we need to seek inside last item to determine its size at the moment of call
