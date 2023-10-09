@@ -2,7 +2,7 @@
 name = "filetrack"
 version = "0.1.1"
 edition = "2021"
-description = "a library for persistent reading of logs"
+description = "persistent logrotated reading and other useful io things"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/HectorHW/filetrack"
@@ -18,3 +18,4 @@ thiserror = "1.0.49"
 
 [dev-dependencies]
 anyhow = "1.0.75"
+rstest = "0.18.2"
