@@ -8,7 +8,10 @@ Its main intention is to be used for implementation of custom log processors.
 Instantiate `TrackedReader` by passing it a path to logfile intended for reading as well as a path to file used as a registry for
 persistent offset storage.
 
-```rust
+```rust no_run
+use std::io::BufRead;
+use filetrack::TrackedReader;
+
 fn main() -> Result<(), anyhow::Error> {
     let mut reader = TrackedReader::new("examples/file.txt", "examples/registry")?;
     let mut input = String::new();
