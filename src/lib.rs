@@ -1,5 +1,7 @@
 #![doc = include_str!("../README.md")]
 
+mod multireader;
+
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read, Seek},
