@@ -43,6 +43,13 @@ impl<R: Seek> Multireader<R> {
         self.global_offset - self.offsets[item_index - 1]
     }
 
+    //we do not have is_empty because, well, this reader cannot be empty
+    #[allow(clippy::len_without_is_empty)]
+    /// number of underlying items
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
     /// index of an item that is currently read
     pub fn get_current_item_index(&self) -> usize {
         let mut rightmost_index = 0;
@@ -78,7 +85,7 @@ impl<R: Seek> Multireader<R> {
 
     fn get_last_item_size(&mut self) -> io::Result<u64> {
         let last_item = self.items.last_mut().unwrap();
-        let original_offset = last_item.seek(io::SeekFrom::Current(0))?;
+        let original_offset = last_item.stream_position()?;
         let size = last_item.seek(io::SeekFrom::End(0))?;
         last_item.seek(io::SeekFrom::Start(original_offset))?;
         Ok(size)

@@ -2,9 +2,12 @@
 
 mod multireader;
 
+pub use multireader::Multireader;
+
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufReader, Seek},
+    ops::{Deref, DerefMut},
     os::unix::prelude::MetadataExt,
     path::{Path, PathBuf},
 };
@@ -13,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-struct State {
+pub struct State {
     pub offset: u64,
     pub inode: u64,
 }
@@ -48,21 +51,6 @@ impl State {
     }
 }
 
-enum Files {
-    Current {
-        file: BufReader<File>,
-        inode: u64,
-    },
-
-    CurrentAndPrevious {
-        previous: BufReader<File>,
-        previous_inode: u64,
-        previous_size: u64,
-        current: BufReader<File>,
-        current_inode: u64,
-    },
-}
-
 /// Structure that implements `Read`, `ReadBuf` and `Seek` while working with persistent offset in up to two underlying files.
 /// External file is used to persist offset across restarts.
 ///
@@ -74,8 +62,8 @@ enum Files {
 /// * **implicitly** by relying on `Drop`. Note that errors generated while working with the filesystem cannot be handled and will
 /// cause a panic in this case.
 pub struct TrackedReader {
-    files: Files,
-    global_offset: u64,
+    inner: Multireader<BufReader<File>>,
+    inodes: Vec<u64>,
     registry: File,
     already_freed: bool,
 }
@@ -104,30 +92,33 @@ impl TrackedReader {
         registry: impl AsRef<Path>,
     ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
-        let files = open_files(PathBuf::from(filepath.as_ref()), state_from_disk)?;
+        let (files, inodes) = open_files(PathBuf::from(filepath.as_ref()), state_from_disk)?;
         let initial_offset = state_from_disk
             .map(|state| state.offset)
             .unwrap_or_default();
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
-            files,
-            global_offset: initial_offset,
+            inner: Multireader::new(files)?,
+            inodes,
             registry,
             already_freed: false,
         };
-        reader.seek(std::io::SeekFrom::Start(initial_offset))?;
-        // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
-        // This will make struct work correctly even if close/Drop will never happen (eg in case of mem::forget).
-        if state_from_disk.is_none() {
+        if let Some(state) = state_from_disk {
+            reader.seek(std::io::SeekFrom::Start(state.offset))?;
+        } else {
+            // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
+            // This will make struct work correctly even if close/Drop will never happen (eg in case of mem::forget).
             reader.persist()?;
         }
+        reader.seek(std::io::SeekFrom::Start(initial_offset))?;
+
         Ok(reader)
     }
 
     /// Explicitly save current state into registry file and return any errors generated
     pub fn persist(&mut self) -> std::io::Result<()> {
-        self.extract_state().persist(&mut self.registry)
+        self.get_persistent_state().persist(&mut self.registry)
     }
 
     /// Explicitly finalize structure, returning any errors that were produced in the process. Alternative to relying on `Drop`.
@@ -137,29 +128,17 @@ impl TrackedReader {
         Ok(())
     }
 
-    fn extract_state(&self) -> State {
-        match &self.files {
-            Files::Current { inode, .. } => State {
-                offset: self.global_offset,
-                inode: *inode,
-            },
-            Files::CurrentAndPrevious {
-                previous_inode,
-                previous_size,
-                current_inode,
-                ..
-            } => {
-                if self.global_offset >= *previous_size {
-                    State {
-                        offset: self.global_offset - previous_size,
-                        inode: *current_inode,
-                    }
-                } else {
-                    State {
-                        offset: self.global_offset,
-                        inode: *previous_inode,
-                    }
-                }
+    /// Get current state for possible manual handling
+    pub fn get_persistent_state(&self) -> State {
+        if self.len() == 1 {
+            State {
+                offset: self.get_global_offset(),
+                inode: self.inodes[0],
+            }
+        } else {
+            State {
+                offset: self.get_local_offset(),
+                inode: self.inodes[self.get_current_item_index()],
             }
         }
     }
@@ -175,25 +154,21 @@ fn maybe_read_state(path: &Path) -> Result<Option<State>, TrackedReaderError> {
     Ok(Some(state))
 }
 
-fn open_files(path: PathBuf, state: Option<State>) -> Result<Files, TrackedReaderError> {
+fn open_files(
+    path: PathBuf,
+    state: Option<State>,
+) -> Result<(Vec<BufReader<File>>, Vec<u64>), TrackedReaderError> {
     match state {
         None => {
             let current_file_meta = std::fs::metadata(&path)?;
             let reader = BufReader::new(File::open(path)?);
-            Ok(Files::Current {
-                file: reader,
-                inode: current_file_meta.ino(),
-            })
+            Ok((vec![reader], vec![current_file_meta.ino()]))
         }
         Some(state) => {
             let current_file_meta = std::fs::metadata(&path)?;
-            let mut current_file = BufReader::new(File::open(&path)?);
-            current_file.seek(std::io::SeekFrom::Start(state.offset))?;
+            let current_file = BufReader::new(File::open(&path)?);
             if current_file_meta.ino() == state.inode {
-                Ok(Files::Current {
-                    file: current_file,
-                    inode: state.inode,
-                })
+                Ok((vec![current_file], vec![current_file_meta.ino()]))
             } else {
                 let older_path = get_rotated_filename(&path);
                 let older_path_meta = std::fs::metadata(&older_path)?;
@@ -205,13 +180,10 @@ fn open_files(path: PathBuf, state: Option<State>) -> Result<Files, TrackedReade
                     ));
                 }
                 let older = BufReader::new(File::open(older_path)?);
-                Ok(Files::CurrentAndPrevious {
-                    previous: older,
-                    previous_inode: older_path_meta.ino(),
-                    previous_size: older_path_meta.size(),
-                    current: current_file,
-                    current_inode: current_file_meta.ino(),
-                })
+                Ok((
+                    vec![older, current_file],
+                    vec![older_path_meta.ino(), current_file_meta.ino()],
+                ))
             }
         }
     }
@@ -236,136 +208,17 @@ fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
         .open(path)
 }
 
-impl Read for TrackedReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match &mut self.files {
-            Files::Current { file, .. } => {
-                let read = file.read(buf)?;
-                self.global_offset += read as u64;
-                Ok(read)
-            }
-            Files::CurrentAndPrevious {
-                previous,
-                previous_size,
-                current,
-                ..
-            } => {
-                // because we read forward, we can use current offset to determine file we are in
-                let read = if self.global_offset < *previous_size {
-                    previous.read(buf)?
-                } else {
-                    current.read(buf)?
-                };
-                self.global_offset += read as u64;
-                Ok(read)
-            }
-        }
+impl Deref for TrackedReader {
+    type Target = Multireader<BufReader<File>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 
-impl BufRead for TrackedReader {
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        match &mut self.files {
-            Files::Current { file, .. } => file.fill_buf(),
-            Files::CurrentAndPrevious {
-                previous,
-                current,
-                previous_size,
-                ..
-            } => {
-                // firstly, we determine if we are reading from the first or the second file
-                if self.global_offset < *previous_size {
-                    // then we can simply ask appropriate file to fill the buffer
-                    //
-                    // previous file is not over yet because we've read less than size and we trust
-                    // that previous file won't change
-                    previous.fill_buf()
-                } else {
-                    current.fill_buf()
-                }
-                // because of consume, we will shift file pointer into correct location
-            }
-        }
-    }
-
-    fn consume(&mut self, amt: usize) {
-        match &mut self.files {
-            Files::Current { file, .. } => {
-                file.consume(amt);
-                self.global_offset += amt as u64;
-            }
-            Files::CurrentAndPrevious {
-                previous,
-                previous_size,
-                current,
-                ..
-            } => {
-                // the proper file returned some nonzero buf result, so we just need to forward `amt` to it
-                if self.global_offset < *previous_size {
-                    previous.consume(amt);
-                } else {
-                    current.consume(amt)
-                }
-                self.global_offset += amt as u64;
-            }
-        }
-    }
-}
-
-impl Seek for TrackedReader {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        match &mut self.files {
-            Files::Current { file, .. } => {
-                let new_pos = file.seek(pos)?;
-                self.global_offset = new_pos;
-                Ok(new_pos)
-            }
-            Files::CurrentAndPrevious {
-                previous,
-                previous_size,
-                current,
-                ..
-            } => match pos {
-                std::io::SeekFrom::Start(offset) => {
-                    let previous_size = *previous_size;
-                    self.global_offset = offset;
-                    if offset > previous_size {
-                        let offset_in_new =
-                            current.seek(std::io::SeekFrom::Start(offset - previous_size))?;
-                        Ok(previous_size + offset_in_new)
-                    } else {
-                        // here we seek both files - because we initially read from the first one,
-                        // second should also be reset to read from start when we get here
-                        current.rewind()?;
-                        previous.seek(pos)
-                    }
-                }
-                std::io::SeekFrom::Current(offset) => {
-                    let new_position = self.global_offset as i64 + offset;
-                    if new_position < 0 {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "negative real offset after seek",
-                        ));
-                    }
-                    let new_position = new_position as u64;
-                    self.seek(std::io::SeekFrom::Start(new_position))
-                }
-                std::io::SeekFrom::End(offset) => {
-                    //lets suppose that both files do not change for the duration of seek
-                    let current_file_size = current.seek(std::io::SeekFrom::End(0))?;
-                    let total_offset = (*previous_size + current_file_size) as i64 + offset;
-                    if total_offset < 0 {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "negative real offset after seek",
-                        ));
-                    }
-                    let total_offset = total_offset as u64;
-                    self.seek(std::io::SeekFrom::Start(total_offset))
-                }
-            },
-        }
+impl DerefMut for TrackedReader {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 
