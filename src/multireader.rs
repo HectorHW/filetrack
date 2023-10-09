@@ -1,6 +1,38 @@
 use std::io::{self, BufRead, Read, Seek};
 
-/// structure that provides seeking and reading in a sequence of underlying readables
+/// Structure that provides seeking and reading in a sequence of underlying readables
+///
+/// ## Usage
+///
+/// Create a Multireader from a collection of items. Items are required to implement `Seek`, and must additionally support Read
+/// and BufRead to provide such functionality on resulting aggregate.
+///
+/// ```rust
+/// # use std::io::{Cursor, Read};
+/// # use filetrack::Multireader;
+/// let inner_items = vec![Cursor::new(vec![1, 2, 3]), Cursor::new(vec![4, 5])];
+/// // we get result here because Multireader performs seek
+/// // (fallible operation) under the hood to determine sizes
+/// let mut reader = Multireader::new(inner_items)?;
+/// # let mut buf = vec![];
+/// reader.read_to_end(&mut buf)?;
+/// assert_eq!(buf, vec![1, 2, 3, 4, 5])
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
+/// Multireader allows seeking inside multiple underlying items as if you only had one big buffer
+/// ```rust
+/// # use std::io::{Cursor, Read, SeekFrom, Seek};
+/// # use filetrack::Multireader;
+/// # let inner_items = vec![Cursor::new(vec![1, 2, 3]), Cursor::new(vec![4, 5])];
+/// # let mut reader = Multireader::new(inner_items)?;
+/// reader.seek(SeekFrom::Start(3))?;
+/// assert_eq!(reader.get_global_offset(), 3);
+/// // you can get index of current item as well as offset into it
+/// assert_eq!(reader.get_current_item_index(), 1);
+/// assert_eq!(reader.get_local_offset(), 0);
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub struct Multireader<R: Seek> {
     /// nonempty
     items: Vec<R>,
@@ -9,7 +41,7 @@ pub struct Multireader<R: Seek> {
 }
 
 impl<R: Seek> Multireader<R> {
-    /// create a Multireader from a collection of readers
+    /// create a Multireader from a nonempty collection of readers
     ///
     /// this function returns io::Result because it will use seek to determine sizes which can fail
     pub fn new(mut items: Vec<R>) -> io::Result<Self> {
@@ -203,13 +235,6 @@ mod tests {
         let mut buf = vec![];
         singleitem_reader.read_to_end(&mut buf).unwrap();
         assert_eq!(buf, vec![1, 2, 3])
-    }
-
-    #[rstest]
-    fn reader_should_read_from_multiple_items(mut multiitem_reader: FakeReader) {
-        let mut buf = vec![];
-        multiitem_reader.read_to_end(&mut buf).unwrap();
-        assert_eq!(buf, vec![1, 2, 3, 4, 5])
     }
 
     #[rstest]
