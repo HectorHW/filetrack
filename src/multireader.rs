@@ -37,14 +37,17 @@ impl<R: Seek> Multireader<R> {
     /// offset inside current item
     pub fn get_local_offset(&self) -> u64 {
         let item_index = self.get_current_item_index();
-        self.global_offset - self.offsets[item_index]
+        if item_index == 0 {
+            return self.global_offset;
+        }
+        self.global_offset - self.offsets[item_index - 1]
     }
 
     /// index of an item that is currently read
     pub fn get_current_item_index(&self) -> usize {
         let mut rightmost_index = 0;
         for &item in &self.offsets {
-            if self.global_offset < item {
+            if self.global_offset >= item {
                 rightmost_index += 1;
             } else {
                 break;
@@ -165,5 +168,75 @@ impl<R: Seek> Seek for Multireader<R> {
                 self.seek(io::SeekFrom::Start(new_position as u64))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read, Seek};
+
+    use rstest::{fixture, rstest};
+
+    use super::Multireader;
+
+    type FakeReader = Multireader<Cursor<Vec<u8>>>;
+
+    #[fixture]
+    fn singleitem_reader() -> FakeReader {
+        Multireader::new(vec![Cursor::new(vec![1, 2, 3])]).unwrap()
+    }
+
+    #[fixture]
+    fn multiitem_reader() -> FakeReader {
+        Multireader::new(vec![Cursor::new(vec![1, 2, 3]), Cursor::new(vec![4, 5])]).unwrap()
+    }
+
+    #[rstest]
+    fn reader_should_read_from_one_item(mut singleitem_reader: FakeReader) {
+        let mut buf = vec![];
+        singleitem_reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, vec![1, 2, 3])
+    }
+
+    #[rstest]
+    fn reader_should_read_from_multiple_items(mut multiitem_reader: FakeReader) {
+        let mut buf = vec![];
+        multiitem_reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, vec![1, 2, 3, 4, 5])
+    }
+
+    #[rstest]
+    fn reader_should_seek_into_inner_item(mut singleitem_reader: FakeReader) {
+        singleitem_reader.seek(std::io::SeekFrom::Start(1)).unwrap();
+        assert_eq!(singleitem_reader.get_global_offset(), 1);
+        assert_eq!(singleitem_reader.get_local_offset(), 1);
+
+        let mut buf = vec![255];
+        singleitem_reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, vec![2]);
+    }
+
+    #[rstest]
+    fn reader_should_seek_into_first_item(mut multiitem_reader: FakeReader) {
+        multiitem_reader.seek(std::io::SeekFrom::Start(1)).unwrap();
+        assert_eq!(multiitem_reader.get_global_offset(), 1);
+        assert_eq!(multiitem_reader.get_local_offset(), 1);
+        assert_eq!(multiitem_reader.get_current_item_index(), 0);
+
+        let mut buf = vec![255];
+        multiitem_reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, vec![2]);
+    }
+
+    #[rstest]
+    fn reader_should_seek_into_second_item(mut multiitem_reader: FakeReader) {
+        multiitem_reader.seek(std::io::SeekFrom::Start(4)).unwrap();
+        assert_eq!(multiitem_reader.get_global_offset(), 4);
+        assert_eq!(multiitem_reader.get_local_offset(), 1);
+        assert_eq!(multiitem_reader.get_current_item_index(), 1);
+
+        let mut buf = vec![255];
+        multiitem_reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, vec![5]);
     }
 }
