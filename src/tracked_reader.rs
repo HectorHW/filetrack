@@ -224,14 +224,7 @@ fn open_files(
 }
 
 fn get_rotated_filename(path: &Path) -> PathBuf {
-    append_ext("1", path.to_path_buf())
-}
-
-fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
-    let mut os_string: std::ffi::OsString = path.into();
-    os_string.push(".");
-    os_string.push(ext.as_ref());
-    os_string.into()
+    crate::path_utils::append_extension(path.to_path_buf(), "1")
 }
 
 fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {

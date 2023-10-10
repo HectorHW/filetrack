@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read, Seek};
+use std::io::{self, BufRead, Read, Seek, SeekFrom};
 
 /// Structure that provides seeking and reading in a sequence of underlying readables
 ///
@@ -115,7 +115,52 @@ impl<R: Seek> Multireader<R> {
         &mut self.items[index]
     }
 
-    fn get_last_item_size(&mut self) -> io::Result<u64> {
+    /// Seek current underlying reader properly updating any internal state
+    ///
+    /// Returns current local offset after seek
+    pub fn seek_current_item(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let local_offset = self.get_current_item().seek(pos)?;
+        self.global_offset = self.get_bytes_before_current_item() + local_offset;
+        Ok(local_offset)
+    }
+
+    pub fn seek_to_item_start(&mut self, item_index: usize) -> io::Result<u64> {
+        self.seek(SeekFrom::Start(self.offsets[item_index]))
+    }
+
+    /// Seek globally by providing local `pos` inside item at index `item_index`
+    ///
+    /// Provided `pos` must be inside indexed item. Returns current local offset.
+    pub fn seek_by_local_index(&mut self, item_index: usize, pos: SeekFrom) -> io::Result<u64> {
+        self.seek_to_item_start(item_index)?;
+        self.seek_current_item(pos)
+    }
+
+    /// Returns item size of item. If it is last, returns None instead
+    ///
+    /// To determine size of last item, use get_last_item_size
+    pub fn get_current_item_size(&self) -> Option<u64> {
+        let current_index = self.get_current_item_index();
+        if current_index == self.len() - 1 {
+            return None;
+        }
+        //we know that current item is not last
+        let next_item_start = self.offsets[current_index + 1];
+        return Some(next_item_start - self.get_bytes_before_current_item());
+    }
+
+    /// Computes global offset from which current item starts
+    pub fn get_bytes_before_current_item(&self) -> u64 {
+        if self.get_current_item_index() == 0 {
+            return 0;
+        }
+        return self.offsets[self.get_current_item_index() - 1];
+    }
+
+    /// Computes last item size
+    ///
+    /// Last file in this reader may still be written into, so this number may soon become invalid
+    pub fn get_last_item_size(&mut self) -> io::Result<u64> {
         let last_item = self.items.last_mut().unwrap();
         let original_offset = last_item.stream_position()?;
         let size = last_item.seek(io::SeekFrom::End(0))?;
