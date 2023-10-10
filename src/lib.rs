@@ -2,7 +2,7 @@
 
 mod inode_aware;
 mod multireader;
-mod path_utils;
+pub mod path_utils;
 mod tracked_reader;
 
 pub use inode_aware::{InodeAwareMultireader, InodeAwareOffset};
