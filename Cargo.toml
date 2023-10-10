@@ -1,6 +1,6 @@
 [package]
 name = "filetrack"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "persistent logrotated reading and other useful io things"
 license = "MIT"
