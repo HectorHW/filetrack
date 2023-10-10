@@ -36,6 +36,7 @@ use std::io::{self, BufRead, Read, Seek, SeekFrom};
 pub struct Multireader<R: Seek> {
     /// nonempty
     items: Vec<R>,
+    /// global offsets for all files except for first (which is zero)
     offsets: Vec<u64>,
     global_offset: u64,
 }
@@ -125,7 +126,11 @@ impl<R: Seek> Multireader<R> {
     }
 
     pub fn seek_to_item_start(&mut self, item_index: usize) -> io::Result<u64> {
-        self.seek(SeekFrom::Start(self.offsets[item_index]))
+        if item_index == 0 {
+            self.seek(SeekFrom::Start(0))
+        } else {
+            self.seek(SeekFrom::Start(self.offsets[item_index - 1]))
+        }
     }
 
     /// Seek globally by providing local `pos` inside item at index `item_index`
