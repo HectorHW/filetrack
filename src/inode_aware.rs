@@ -21,6 +21,19 @@ pub struct InodeAwareOffset {
 /// This Multireader supports persistent indexing using `InodeAwareOffset`. It allows easy persistent reading of rotated logs.
 /// Scheme of persistent is to be implemented by user. For a ready-to-use recipe with simple file storage see `TrackedReader`.
 ///
+/// ```rust no_run
+/// # use std::io::{Read, BufRead, self};
+/// # use filetrack::{InodeAwareOffset, InodeAwareMultireader};
+/// # fn load_state() -> io::Result<InodeAwareOffset> {Ok(InodeAwareOffset{inode: 0, offset: 0})}
+/// # fn save_state(state: InodeAwareOffset) -> io::Result<()> {Ok(())}
+/// let mut reader = InodeAwareMultireader::from_rotated_logs("/var/log/mail.log")?;
+/// reader.seek_persistent(load_state()?)?;
+/// # let mut buf = vec![];
+/// reader.read_exact(& mut buf)?;
+/// save_state(reader.get_persistent_offset())?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+///
 /// During initialization, this reader searches for rotated versions of provided path and notes their inodes. After that inodes can be
 /// used for simple persistent indexing when combined with local offset.
 pub struct InodeAwareMultireader {
