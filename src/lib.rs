@@ -5,6 +5,6 @@ mod multireader;
 pub mod path_utils;
 mod tracked_reader;
 
-pub use inode_aware::{InodeAwareMultireader, InodeAwareOffset};
+pub use inode_aware::{InodeAwareOffset, InodeAwareReader};
 pub use multireader::Multireader;
 pub use tracked_reader::{State, StateSerdeError, TrackedReader, TrackedReaderError};

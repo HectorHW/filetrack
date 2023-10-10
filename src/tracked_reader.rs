@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::inode_aware::{InodeAwareMultireader, InodeAwareOffset};
+use crate::inode_aware::{InodeAwareOffset, InodeAwareReader};
 
 /// Structure used by `TrackedReader` for simple file persistence
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -96,7 +96,7 @@ impl State {
 /// performing final save (done by `.close()` or Drop). Overall, this library is intended to be used for mostly forward reading of
 /// log files.
 pub struct TrackedReader {
-    inner: InodeAwareMultireader,
+    inner: InodeAwareReader,
     registry: File,
     already_freed: bool,
 }
@@ -125,7 +125,7 @@ impl TrackedReader {
         registry: impl AsRef<Path>,
     ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
-        let reader = InodeAwareMultireader::from_rotated_logs(filepath)?;
+        let reader = InodeAwareReader::from_rotated_logs(filepath)?;
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
@@ -183,7 +183,7 @@ fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
 }
 
 impl Deref for TrackedReader {
-    type Target = InodeAwareMultireader;
+    type Target = InodeAwareReader;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

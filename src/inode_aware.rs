@@ -16,17 +16,17 @@ pub struct InodeAwareOffset {
     pub offset: u64,
 }
 
-/// Multireader that keeps track of what inode it reads from
+/// Reader that keeps track of what inode it reads from
 ///
-/// This Multireader supports persistent indexing using `InodeAwareOffset`. It allows easy persistent reading of rotated logs.
+/// This reader supports persistent indexing using `InodeAwareOffset`. It allows easy persistent reading of rotated logs.
 /// Scheme of persistent is to be implemented by user. For a ready-to-use recipe with simple file storage see `TrackedReader`.
 ///
 /// ```rust no_run
 /// # use std::io::{Read, BufRead, self};
-/// # use filetrack::{InodeAwareOffset, InodeAwareMultireader};
+/// # use filetrack::{InodeAwareOffset, InodeAwareReader};
 /// # fn load_state() -> io::Result<InodeAwareOffset> {Ok(InodeAwareOffset{inode: 0, offset: 0})}
 /// # fn save_state(state: InodeAwareOffset) -> io::Result<()> {Ok(())}
-/// let mut reader = InodeAwareMultireader::from_rotated_logs("/var/log/mail.log")?;
+/// let mut reader = InodeAwareReader::from_rotated_logs("/var/log/mail.log")?;
 /// reader.seek_persistent(load_state()?)?;
 /// # let mut buf = vec![];
 /// reader.read_exact(& mut buf)?;
@@ -36,12 +36,12 @@ pub struct InodeAwareOffset {
 ///
 /// During initialization, this reader searches for rotated versions of provided path and notes their inodes. After that inodes can be
 /// used for simple persistent indexing when combined with local offset.
-pub struct InodeAwareMultireader {
+pub struct InodeAwareReader {
     inner: Multireader<BufReader<File>>,
     inodes: Vec<u64>,
 }
 
-impl InodeAwareMultireader {
+impl InodeAwareReader {
     /// Construct `InodeAwareMultireader` searching for up to two rotated logs
     pub fn from_rotated_logs(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::from_rotated_logs_with_depth(path, 2)
@@ -114,7 +114,7 @@ impl InodeAwareMultireader {
     }
 }
 
-impl Deref for InodeAwareMultireader {
+impl Deref for InodeAwareReader {
     type Target = Multireader<BufReader<File>>;
 
     fn deref(&self) -> &Self::Target {
@@ -122,7 +122,7 @@ impl Deref for InodeAwareMultireader {
     }
 }
 
-impl DerefMut for InodeAwareMultireader {
+impl DerefMut for InodeAwareReader {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
