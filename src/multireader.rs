@@ -146,7 +146,7 @@ impl<R: Seek> Multireader<R> {
         }
         //we know that current item is not last
         let next_item_start = self.offsets[current_index + 1];
-        return Some(next_item_start - self.get_bytes_before_current_item());
+        Some(next_item_start - self.get_bytes_before_current_item())
     }
 
     /// Computes global offset from which current item starts
@@ -154,7 +154,7 @@ impl<R: Seek> Multireader<R> {
         if self.get_current_item_index() == 0 {
             return 0;
         }
-        return self.offsets[self.get_current_item_index() - 1];
+        self.offsets[self.get_current_item_index() - 1]
     }
 
     /// Computes last item size
