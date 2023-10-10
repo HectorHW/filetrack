@@ -1,15 +1,14 @@
 use std::{
     fs::File,
-    io::{BufReader, Seek},
+    io::Seek,
     ops::{Deref, DerefMut},
-    os::unix::prelude::MetadataExt,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::Multireader;
+use crate::inode_aware::InodeAwareMultireader;
 
 /// Structure used to store state of `TrackedReader`
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -96,8 +95,7 @@ impl State {
 /// performing final save (done by `.close()` or Drop). Overall, this library is intended to be used for mostly forward reading of
 /// log files.
 pub struct TrackedReader {
-    inner: Multireader<BufReader<File>>,
-    inodes: Vec<u64>,
+    inner: InodeAwareMultireader,
     registry: File,
     already_freed: bool,
 }
@@ -126,15 +124,14 @@ impl TrackedReader {
         registry: impl AsRef<Path>,
     ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
-        let (files, inodes) = open_files(PathBuf::from(filepath.as_ref()), state_from_disk)?;
+        let reader = InodeAwareMultireader::from_rotated_logs(filepath)?;
         let initial_offset = state_from_disk
             .map(|state| state.offset)
             .unwrap_or_default();
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
-            inner: Multireader::new(files)?,
-            inodes,
+            inner: reader,
             registry,
             already_freed: false,
         };
@@ -167,12 +164,12 @@ impl TrackedReader {
         if self.len() == 1 {
             State {
                 offset: self.get_global_offset(),
-                inode: self.inodes[0],
+                inode: self.get_inodes()[0],
             }
         } else {
             State {
                 offset: self.get_local_offset(),
-                inode: self.inodes[self.get_current_item_index()],
+                inode: self.get_inodes()[self.get_current_item_index()],
             }
         }
     }
@@ -188,45 +185,6 @@ fn maybe_read_state(path: &Path) -> Result<Option<State>, TrackedReaderError> {
     Ok(Some(state))
 }
 
-fn open_files(
-    path: PathBuf,
-    state: Option<State>,
-) -> Result<(Vec<BufReader<File>>, Vec<u64>), TrackedReaderError> {
-    match state {
-        None => {
-            let current_file_meta = std::fs::metadata(&path)?;
-            let reader = BufReader::new(File::open(path)?);
-            Ok((vec![reader], vec![current_file_meta.ino()]))
-        }
-        Some(state) => {
-            let current_file_meta = std::fs::metadata(&path)?;
-            let current_file = BufReader::new(File::open(&path)?);
-            if current_file_meta.ino() == state.inode {
-                Ok((vec![current_file], vec![current_file_meta.ino()]))
-            } else {
-                let older_path = get_rotated_filename(&path);
-                let older_path_meta = std::fs::metadata(&older_path)?;
-
-                if older_path_meta.ino() != state.inode {
-                    return Err(TrackedReaderError::RotationResolution(
-                        "failed to resolve rotated file: previous file's inode does not match"
-                            .to_string(),
-                    ));
-                }
-                let older = BufReader::new(File::open(older_path)?);
-                Ok((
-                    vec![older, current_file],
-                    vec![older_path_meta.ino(), current_file_meta.ino()],
-                ))
-            }
-        }
-    }
-}
-
-fn get_rotated_filename(path: &Path) -> PathBuf {
-    crate::path_utils::append_extension(path.to_path_buf(), "1")
-}
-
 fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
     File::options()
         .read(true)
@@ -236,7 +194,7 @@ fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
 }
 
 impl Deref for TrackedReader {
-    type Target = Multireader<BufReader<File>>;
+    type Target = InodeAwareMultireader;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
