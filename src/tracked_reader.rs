@@ -10,6 +10,7 @@ use thiserror::Error;
 
 use crate::inode_aware::{InodeAwareMultireader, InodeAwareOffset};
 
+/// Structure used by `TrackedReader` for simple file persistence
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct State {
     pub offset: InodeAwareOffset,
@@ -26,13 +27,15 @@ pub enum StateSerdeError {
 }
 
 impl State {
-    fn load(file: &mut File) -> Result<Self, StateSerdeError> {
+    /// deserialize State from a file
+    pub fn load(file: &mut File) -> Result<Self, StateSerdeError> {
         file.rewind()?;
         let state = bincode::deserialize_from(file)?;
         Ok(state)
     }
 
-    fn persist(&self, file: &mut File) -> std::io::Result<()> {
+    /// serialize and write State to a file
+    pub fn persist(&self, file: &mut File) -> std::io::Result<()> {
         file.rewind()?;
         match bincode::serialize_into(file, self) {
             Ok(_) => {}
@@ -78,14 +81,14 @@ impl State {
 /// ## Working principles
 ///
 /// To maintain offset in a file across restarts, separate "registry" file is used for persistence. Inode is stored additionally to
-/// offset, which allows to keep reading log file in case it was logrotate'd at MOST once. During intialization, inode of file to be read
+/// offset, which allows to keep reading log file in case it was logrotate'd at MOST twice. During intialization, inode of file to be read
 /// is compared to previously known and if it differs, it means that file was rotated and a search for original file is performed by checking
 /// a file identified by path appended by `.1` (eg. `mail.log` and `mail.log.1`). After that you are given a file-like structure that allows
 /// buffered reading and seeking in up to two files.
 ///
 /// ## Limitations
 ///
-/// * You can only expect this to work if logrotation happened at most once. This means that if you are creating a log processor for
+/// * You can only expect this to work if logrotation happened at most twice. This means that if you are creating a log processor for
 /// example, it should be run frequently enough to keep up with logs that are written and rotated.
 ///
 /// * Due to simple scheme of persistence, we cannot seek back into rotated file version after saving state while reading from current

@@ -18,7 +18,11 @@ assert_eq!(buf, vec![1, 2, 3, 4, 5]);
 # Ok::<(), std::io::Error>(())
 ```
 
-* `TrackedReader` that allows to read logs or any other content from rotated files with offset persisted across restarts
+* `InodeAwareReader` that allows working with rotated logs and maintating persistent offset inside them. Scheme of persistence is to be
+implemented by user.
+
+* `TrackedReader` that allows to read logs or any other content from rotated files with offset persisted across restarts inside a file
+in case you want a ready-to-use structure.
 
 ```rust no_run
 // running this program multiple times will output next line on each execution

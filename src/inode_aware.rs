@@ -9,13 +9,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::{path_utils::glob_rotated_logs, Multireader};
 
-/// Structure that can be used as persistent offset into rotated logs
+/// Structure that can be used as persistent offset into rotated logs. See `InodeAwareMultireader` for more info.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InodeAwareOffset {
     pub inode: u64,
     pub offset: u64,
 }
 
+/// Multireader that keeps track of what inode it reads from
+///
+/// This Multireader supports persistent indexing using `InodeAwareOffset`. It allows easy persistent reading of rotated logs.
+/// Scheme of persistent is to be implemented by user. For a ready-to-use recipe with simple file storage see `TrackedReader`.
+///
+/// During initialization, this reader searches for rotated versions of provided path and notes their inodes. After that inodes can be
+/// used for simple persistent indexing when combined with local offset.
 pub struct InodeAwareMultireader {
     inner: Multireader<BufReader<File>>,
     inodes: Vec<u64>,
