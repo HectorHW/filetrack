@@ -81,15 +81,15 @@ impl State {
 /// ## Working principles
 ///
 /// To maintain offset in a file across restarts, separate "registry" file is used for persistence. Inode is stored additionally to
-/// offset, which allows to keep reading log file in case it was logrotate'd at MOST twice. During intialization, inode of file to be read
+/// offset, which allows to keep reading log file in case it was logrotate'd. During intialization, inode of file to be read
 /// is compared to previously known and if it differs, it means that file was rotated and a search for original file is performed by checking
-/// a file identified by path appended by `.1` (eg. `mail.log` and `mail.log.1`). After that you are given a file-like structure that allows
-/// buffered reading and seeking in up to two files.
+/// a file identified by path appended by `.1` (eg. `mail.log` and `mail.log.1`) and so on. After that you are given a file-like structure that allows
+/// buffered reading and seeking in up to specified number of files files.
 ///
 /// ## Limitations
 ///
-/// * You can only expect this to work if logrotation happened at most twice. This means that if you are creating a log processor for
-/// example, it should be run frequently enough to keep up with logs that are written and rotated.
+/// * You can only expect this to work if logrotation happened not more than the number you specified as search_depth. This means that if you are
+/// creating a log processor for example, it should be run frequently enough to keep up with logs that are written and rotated.
 ///
 /// * Due to simple scheme of persistence, we cannot seek back into rotated file version after saving state while reading from current
 /// log file. This means that if your program must do some conditional seeking in a file, you should perform any pointer rollback before
@@ -124,8 +124,19 @@ impl TrackedReader {
         filepath: impl AsRef<Path>,
         registry: impl AsRef<Path>,
     ) -> Result<Self, TrackedReaderError> {
+        Self::with_search_depth(filepath, registry, 1)
+    }
+
+    /// Like `::new` but allows specifying how many rotated items to check
+    ///
+    /// `search_depth` of 2 means that apart from log file we will check for log.1 and log.2
+    pub fn with_search_depth(
+        filepath: impl AsRef<Path>,
+        registry: impl AsRef<Path>,
+        search_depth: usize,
+    ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
-        let reader = InodeAwareReader::from_rotated_logs(filepath)?;
+        let reader = InodeAwareReader::from_rotated_logs_with_depth(filepath, search_depth)?;
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
