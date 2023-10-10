@@ -18,7 +18,24 @@ assert_eq!(buf, vec![1, 2, 3, 4, 5]);
 # Ok::<(), std::io::Error>(())
 ```
 
-* `TrackedReader` that allows to read logs or any other content from rotated files with offset persisted across restarts
+* `InodeAwareReader` that allows working with rotated logs and maintating persistent offset inside them. Scheme of persistence is
+to be implemented by user.
+
+```rust no_run
+# use std::io::{Read, BufRead, self};
+# use filetrack::{InodeAwareOffset, InodeAwareReader};
+# fn load_state() -> io::Result<InodeAwareOffset> {Ok(InodeAwareOffset{inode: 0, offset: 0})}
+# fn save_state(state: InodeAwareOffset) -> io::Result<()> {Ok(())}
+let mut reader = InodeAwareReader::from_rotated_logs("/var/log/mail.log")?;
+reader.seek_persistent(load_state()?)?;
+# let mut buf = vec![];
+reader.read_exact(& mut buf)?;
+save_state(reader.get_persistent_offset())?;
+# Ok::<(), std::io::Error>(())
+```
+
+* `TrackedReader` that allows to read logs or any other content from rotated files with offset persisted across restarts inside a file
+in case you want a ready-to-use structure.
 
 ```rust no_run
 // running this program multiple times will output next line on each execution
