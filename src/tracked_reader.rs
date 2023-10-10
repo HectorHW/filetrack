@@ -59,7 +59,7 @@ impl State {
 ///
 /// ```rust no_run
 /// # use std::io::BufRead;
-/// # use filetrack::TrackedReader;
+/// # use filetrack::{TrackedReader, TrackedReaderError};
 /// let mut reader = TrackedReader::new("examples/file.txt", "examples/registry")?;
 /// # let mut input = String::new();
 /// match reader.read_line(&mut input)? {

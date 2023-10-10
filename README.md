@@ -14,7 +14,7 @@ let inner_items = vec![Cursor::new(vec![1, 2, 3]), Cursor::new(vec![4, 5])];
 let mut reader = Multireader::new(inner_items)?;
 # let mut buf = vec![];
 reader.read_to_end(&mut buf)?;
-assert_eq!(buf, vec![1, 2, 3, 4, 5])
+assert_eq!(buf, vec![1, 2, 3, 4, 5]);
 # Ok::<(), std::io::Error>(())
 ```
 
@@ -23,7 +23,7 @@ assert_eq!(buf, vec![1, 2, 3, 4, 5])
 ```rust no_run
 // running this program multiple times will output next line on each execution
 # use std::io::BufRead;
-# use filetrack::TrackedReader;
+# use filetrack::{TrackedReader, TrackedReaderError};
 let mut reader = TrackedReader::new("examples/file.txt", "examples/registry")?;
 # let mut input = String::new();
 match reader.read_line(&mut input)? {

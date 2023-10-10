@@ -16,7 +16,7 @@ use std::io::{self, BufRead, Read, Seek};
 /// let mut reader = Multireader::new(inner_items)?;
 /// # let mut buf = vec![];
 /// reader.read_to_end(&mut buf)?;
-/// assert_eq!(buf, vec![1, 2, 3, 4, 5])
+/// assert_eq!(buf, vec![1, 2, 3, 4, 5]);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
@@ -212,7 +212,7 @@ impl<R: Seek> Seek for Multireader<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Read, Seek};
+    use std::io::{BufRead, Cursor, Read, Seek};
 
     use rstest::{fixture, rstest};
 
@@ -270,5 +270,16 @@ mod tests {
         let mut buf = vec![255];
         multiitem_reader.read_exact(&mut buf).unwrap();
         assert_eq!(buf, vec![5]);
+    }
+
+    #[test]
+    fn combining_read_and_bufread_should_advance_offset_properly() {
+        let text = "first\nsecond".to_string();
+        let mut reader = Multireader::new(vec![Cursor::new(text)]).unwrap();
+        let mut input = String::new();
+        reader.read_line(&mut input).unwrap();
+        let mut buf = vec![];
+        reader.read_to_end(&mut buf).unwrap();
+        assert_eq!(reader.get_global_offset(), 12);
     }
 }
