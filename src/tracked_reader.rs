@@ -1,21 +1,19 @@
 use std::{
     fs::File,
-    io::{BufReader, Seek},
+    io::Seek,
     ops::{Deref, DerefMut},
-    os::unix::prelude::MetadataExt,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::Multireader;
+use crate::inode_aware::{InodeAwareOffset, InodeAwareReader};
 
-/// Structure used to store state of `TrackedReader`
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+/// Structure used by `TrackedReader` for simple file persistence
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct State {
-    pub offset: u64,
-    pub inode: u64,
+    pub offset: InodeAwareOffset,
 }
 
 /// Possible errors that could happen while working with persistent state storage
@@ -29,12 +27,14 @@ pub enum StateSerdeError {
 }
 
 impl State {
+    /// deserialize State from a file
     pub fn load(file: &mut File) -> Result<Self, StateSerdeError> {
         file.rewind()?;
         let state = bincode::deserialize_from(file)?;
         Ok(state)
     }
 
+    /// serialize and write State to a file
     pub fn persist(&self, file: &mut File) -> std::io::Result<()> {
         file.rewind()?;
         match bincode::serialize_into(file, self) {
@@ -81,23 +81,22 @@ impl State {
 /// ## Working principles
 ///
 /// To maintain offset in a file across restarts, separate "registry" file is used for persistence. Inode is stored additionally to
-/// offset, which allows to keep reading log file in case it was logrotate'd at MOST once. During intialization, inode of file to be read
+/// offset, which allows to keep reading log file in case it was logrotate'd. During intialization, inode of file to be read
 /// is compared to previously known and if it differs, it means that file was rotated and a search for original file is performed by checking
-/// a file identified by path appended by `.1` (eg. `mail.log` and `mail.log.1`). After that you are given a file-like structure that allows
-/// buffered reading and seeking in up to two files.
+/// a file identified by path appended by `.1` (eg. `mail.log` and `mail.log.1`) and so on. After that you are given a file-like structure that allows
+/// buffered reading and seeking in up to specified number of files files.
 ///
 /// ## Limitations
 ///
-/// * You can only expect this to work if logrotation happened at most once. This means that if you are creating a log processor for
-/// example, it should be run frequently enough to keep up with logs that are written and rotated.
+/// * You can only expect this to work if logrotation happened not more than the number you specified as search_depth. This means that if you are
+/// creating a log processor for example, it should be run frequently enough to keep up with logs that are written and rotated.
 ///
 /// * Due to simple scheme of persistence, we cannot seek back into rotated file version after saving state while reading from current
 /// log file. This means that if your program must do some conditional seeking in a file, you should perform any pointer rollback before
 /// performing final save (done by `.close()` or Drop). Overall, this library is intended to be used for mostly forward reading of
 /// log files.
 pub struct TrackedReader {
-    inner: Multireader<BufReader<File>>,
-    inodes: Vec<u64>,
+    inner: InodeAwareReader,
     registry: File,
     already_freed: bool,
 }
@@ -125,27 +124,33 @@ impl TrackedReader {
         filepath: impl AsRef<Path>,
         registry: impl AsRef<Path>,
     ) -> Result<Self, TrackedReaderError> {
+        Self::with_search_depth(filepath, registry, 1)
+    }
+
+    /// Like `::new` but allows specifying how many rotated items to check
+    ///
+    /// `search_depth` of 2 means that apart from log file we will check for log.1 and log.2
+    pub fn with_search_depth(
+        filepath: impl AsRef<Path>,
+        registry: impl AsRef<Path>,
+        search_depth: usize,
+    ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
-        let (files, inodes) = open_files(PathBuf::from(filepath.as_ref()), state_from_disk)?;
-        let initial_offset = state_from_disk
-            .map(|state| state.offset)
-            .unwrap_or_default();
+        let reader = InodeAwareReader::from_rotated_logs_with_depth(filepath, search_depth)?;
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
-            inner: Multireader::new(files)?,
-            inodes,
+            inner: reader,
             registry,
             already_freed: false,
         };
         if let Some(state) = state_from_disk {
-            reader.seek(std::io::SeekFrom::Start(state.offset))?;
+            reader.seek_persistent(state.offset)?;
         } else {
             // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
             // This will make struct work correctly even if close/Drop will never happen (eg in case of mem::forget).
             reader.persist()?;
         }
-        reader.seek(std::io::SeekFrom::Start(initial_offset))?;
 
         Ok(reader)
     }
@@ -164,16 +169,8 @@ impl TrackedReader {
 
     /// Get current state for possible manual handling
     pub fn get_persistent_state(&self) -> State {
-        if self.len() == 1 {
-            State {
-                offset: self.get_global_offset(),
-                inode: self.inodes[0],
-            }
-        } else {
-            State {
-                offset: self.get_local_offset(),
-                inode: self.inodes[self.get_current_item_index()],
-            }
+        State {
+            offset: self.get_persistent_offset(),
         }
     }
 }
@@ -188,52 +185,6 @@ fn maybe_read_state(path: &Path) -> Result<Option<State>, TrackedReaderError> {
     Ok(Some(state))
 }
 
-fn open_files(
-    path: PathBuf,
-    state: Option<State>,
-) -> Result<(Vec<BufReader<File>>, Vec<u64>), TrackedReaderError> {
-    match state {
-        None => {
-            let current_file_meta = std::fs::metadata(&path)?;
-            let reader = BufReader::new(File::open(path)?);
-            Ok((vec![reader], vec![current_file_meta.ino()]))
-        }
-        Some(state) => {
-            let current_file_meta = std::fs::metadata(&path)?;
-            let current_file = BufReader::new(File::open(&path)?);
-            if current_file_meta.ino() == state.inode {
-                Ok((vec![current_file], vec![current_file_meta.ino()]))
-            } else {
-                let older_path = get_rotated_filename(&path);
-                let older_path_meta = std::fs::metadata(&older_path)?;
-
-                if older_path_meta.ino() != state.inode {
-                    return Err(TrackedReaderError::RotationResolution(
-                        "failed to resolve rotated file: previous file's inode does not match"
-                            .to_string(),
-                    ));
-                }
-                let older = BufReader::new(File::open(older_path)?);
-                Ok((
-                    vec![older, current_file],
-                    vec![older_path_meta.ino(), current_file_meta.ino()],
-                ))
-            }
-        }
-    }
-}
-
-fn get_rotated_filename(path: &Path) -> PathBuf {
-    append_ext("1", path.to_path_buf())
-}
-
-fn append_ext(ext: impl AsRef<std::ffi::OsStr>, path: PathBuf) -> PathBuf {
-    let mut os_string: std::ffi::OsString = path.into();
-    os_string.push(".");
-    os_string.push(ext.as_ref());
-    os_string.into()
-}
-
 fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
     File::options()
         .read(true)
@@ -243,7 +194,7 @@ fn open_state_file(path: impl AsRef<Path>) -> std::io::Result<File> {
 }
 
 impl Deref for TrackedReader {
-    type Target = Multireader<BufReader<File>>;
+    type Target = InodeAwareReader;
 
     fn deref(&self) -> &Self::Target {
         &self.inner

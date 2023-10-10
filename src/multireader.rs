@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read, Seek};
+use std::io::{self, BufRead, Read, Seek, SeekFrom};
 
 /// Structure that provides seeking and reading in a sequence of underlying readables
 ///
@@ -36,6 +36,7 @@ use std::io::{self, BufRead, Read, Seek};
 pub struct Multireader<R: Seek> {
     /// nonempty
     items: Vec<R>,
+    /// global offsets for all files except for first (which is zero)
     offsets: Vec<u64>,
     global_offset: u64,
 }
@@ -115,7 +116,56 @@ impl<R: Seek> Multireader<R> {
         &mut self.items[index]
     }
 
-    fn get_last_item_size(&mut self) -> io::Result<u64> {
+    /// Seek current underlying reader properly updating any internal state
+    ///
+    /// Returns current local offset after seek
+    pub fn seek_current_item(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let local_offset = self.get_current_item().seek(pos)?;
+        self.global_offset = self.get_bytes_before_current_item() + local_offset;
+        Ok(local_offset)
+    }
+
+    pub fn seek_to_item_start(&mut self, item_index: usize) -> io::Result<u64> {
+        if item_index == 0 {
+            self.seek(SeekFrom::Start(0))
+        } else {
+            self.seek(SeekFrom::Start(self.offsets[item_index - 1]))
+        }
+    }
+
+    /// Seek globally by providing local `pos` inside item at index `item_index`
+    ///
+    /// Provided `pos` must be inside indexed item. Returns current local offset.
+    pub fn seek_by_local_index(&mut self, item_index: usize, pos: SeekFrom) -> io::Result<u64> {
+        self.seek_to_item_start(item_index)?;
+        self.seek_current_item(pos)
+    }
+
+    /// Returns item size of item. If it is last, returns None instead
+    ///
+    /// To determine size of last item, use get_last_item_size
+    pub fn get_current_item_size(&self) -> Option<u64> {
+        let current_index = self.get_current_item_index();
+        if current_index == self.len() - 1 {
+            return None;
+        }
+        //we know that current item is not last
+        let next_item_start = self.offsets[current_index + 1];
+        Some(next_item_start - self.get_bytes_before_current_item())
+    }
+
+    /// Computes global offset from which current item starts
+    pub fn get_bytes_before_current_item(&self) -> u64 {
+        if self.get_current_item_index() == 0 {
+            return 0;
+        }
+        self.offsets[self.get_current_item_index() - 1]
+    }
+
+    /// Computes last item size
+    ///
+    /// Last file in this reader may still be written into, so this number may soon become invalid
+    pub fn get_last_item_size(&mut self) -> io::Result<u64> {
         let last_item = self.items.last_mut().unwrap();
         let original_offset = last_item.stream_position()?;
         let size = last_item.seek(io::SeekFrom::End(0))?;
@@ -281,5 +331,50 @@ mod tests {
         let mut buf = vec![];
         reader.read_to_end(&mut buf).unwrap();
         assert_eq!(reader.get_global_offset(), 12);
+    }
+
+    #[rstest]
+    fn total_size_is_computed_correctly(mut multiitem_reader: FakeReader) {
+        assert_eq!(multiitem_reader.get_total_size().unwrap(), 5)
+    }
+
+    fn read_to_end(mut r: impl Read) -> Vec<u8> {
+        let mut buf = vec![];
+        r.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    #[rstest]
+    #[case(0, 0, b"\x01\x02\x03\x04\x05")]
+    #[case(1, 3, b"\x04\x05")]
+    fn seek_to_item_start_works(
+        mut multiitem_reader: FakeReader,
+        #[case] item: usize,
+        #[case] expected_offset: u64,
+        #[case] expected_content: &'static [u8],
+    ) {
+        assert_eq!(
+            multiitem_reader.seek_to_item_start(item).unwrap(),
+            expected_offset
+        );
+        assert_eq!(read_to_end(multiitem_reader), expected_content)
+    }
+
+    #[rstest]
+    #[case(0, 0, 0)]
+    #[case(0, 1, 1)]
+    #[case(1, 0, 3)]
+    #[case(1, 1, 4)]
+    fn seek_by_local_index_works(
+        mut multiitem_reader: FakeReader,
+        #[case] item_idx: usize,
+        #[case] index_inside_item: u64,
+        #[case] expected_offset: u64,
+    ) {
+        multiitem_reader
+            .seek_by_local_index(item_idx, std::io::SeekFrom::Start(index_inside_item))
+            .unwrap();
+
+        assert_eq!(multiitem_reader.get_global_offset(), expected_offset)
     }
 }
