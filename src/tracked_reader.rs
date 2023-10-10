@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::inode_aware::{InodeAwareOffset, InodeAwareReader};
 
 /// Structure used by `TrackedReader` for simple file persistence
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct State {
     pub offset: InodeAwareOffset,
 }
