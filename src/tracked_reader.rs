@@ -8,13 +8,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::inode_aware::InodeAwareMultireader;
+use crate::inode_aware::{InodeAwareMultireader, InodeAwareOffset};
 
-/// Structure used to store state of `TrackedReader`
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct State {
-    pub offset: u64,
-    pub inode: u64,
+    pub offset: InodeAwareOffset,
 }
 
 /// Possible errors that could happen while working with persistent state storage
@@ -28,13 +26,13 @@ pub enum StateSerdeError {
 }
 
 impl State {
-    pub fn load(file: &mut File) -> Result<Self, StateSerdeError> {
+    fn load(file: &mut File) -> Result<Self, StateSerdeError> {
         file.rewind()?;
         let state = bincode::deserialize_from(file)?;
         Ok(state)
     }
 
-    pub fn persist(&self, file: &mut File) -> std::io::Result<()> {
+    fn persist(&self, file: &mut File) -> std::io::Result<()> {
         file.rewind()?;
         match bincode::serialize_into(file, self) {
             Ok(_) => {}
@@ -125,9 +123,6 @@ impl TrackedReader {
     ) -> Result<Self, TrackedReaderError> {
         let state_from_disk = maybe_read_state(registry.as_ref())?;
         let reader = InodeAwareMultireader::from_rotated_logs(filepath)?;
-        let initial_offset = state_from_disk
-            .map(|state| state.offset)
-            .unwrap_or_default();
         // now that we know that open_files did not fail, we can create registry file
         let registry = open_state_file(registry)?;
         let mut reader = Self {
@@ -136,13 +131,12 @@ impl TrackedReader {
             already_freed: false,
         };
         if let Some(state) = state_from_disk {
-            reader.seek(std::io::SeekFrom::Start(state.offset))?;
+            reader.seek_persistent(state.offset)?;
         } else {
             // If state did not exist previously, registry file is created empty. We should additionally initialize file content.
             // This will make struct work correctly even if close/Drop will never happen (eg in case of mem::forget).
             reader.persist()?;
         }
-        reader.seek(std::io::SeekFrom::Start(initial_offset))?;
 
         Ok(reader)
     }
@@ -161,16 +155,8 @@ impl TrackedReader {
 
     /// Get current state for possible manual handling
     pub fn get_persistent_state(&self) -> State {
-        if self.len() == 1 {
-            State {
-                offset: self.get_global_offset(),
-                inode: self.get_inodes()[0],
-            }
-        } else {
-            State {
-                offset: self.get_local_offset(),
-                inode: self.get_inodes()[self.get_current_item_index()],
-            }
+        State {
+            offset: self.get_persistent_offset(),
         }
     }
 }
