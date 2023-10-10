@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{path_utils::glob_rotated_logs, Multireader};
 
-/// Structure that can be used as persistent offset into rotated logs. See `InodeAwareMultireader` for more info.
+/// Structure that can be used as persistent offset into rotated logs. See `InodeAwareReader` for more info.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InodeAwareOffset {
     pub inode: u64,
