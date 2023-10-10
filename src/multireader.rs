@@ -332,4 +332,49 @@ mod tests {
         reader.read_to_end(&mut buf).unwrap();
         assert_eq!(reader.get_global_offset(), 12);
     }
+
+    #[rstest]
+    fn total_size_is_computed_correctly(mut multiitem_reader: FakeReader) {
+        assert_eq!(multiitem_reader.get_total_size().unwrap(), 5)
+    }
+
+    fn read_to_end(mut r: impl Read) -> Vec<u8> {
+        let mut buf = vec![];
+        r.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    #[rstest]
+    #[case(0, 0, b"\x01\x02\x03\x04\x05")]
+    #[case(1, 3, b"\x04\x05")]
+    fn seek_to_item_start_works(
+        mut multiitem_reader: FakeReader,
+        #[case] item: usize,
+        #[case] expected_offset: u64,
+        #[case] expected_content: &'static [u8],
+    ) {
+        assert_eq!(
+            multiitem_reader.seek_to_item_start(item).unwrap(),
+            expected_offset
+        );
+        assert_eq!(read_to_end(multiitem_reader), expected_content)
+    }
+
+    #[rstest]
+    #[case(0, 0, 0)]
+    #[case(0, 1, 1)]
+    #[case(1, 0, 3)]
+    #[case(1, 1, 4)]
+    fn seek_by_local_index_works(
+        mut multiitem_reader: FakeReader,
+        #[case] item_idx: usize,
+        #[case] index_inside_item: u64,
+        #[case] expected_offset: u64,
+    ) {
+        multiitem_reader
+            .seek_by_local_index(item_idx, std::io::SeekFrom::Start(index_inside_item))
+            .unwrap();
+
+        assert_eq!(multiitem_reader.get_global_offset(), expected_offset)
+    }
 }
