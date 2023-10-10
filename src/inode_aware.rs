@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     fs::File,
     io::{self, BufReader},
     ops::{Deref, DerefMut},
@@ -111,6 +112,21 @@ impl InodeAwareReader {
             .enumerate()
             .find(|&(_, i)| i == inode)
             .map(|(idx, _)| idx)
+    }
+
+    /// Compare two offsets as if they were pointing into one large buffer. Returns None if any of the offsets do not belong
+    /// to underlying files
+    pub fn compare_offsets(
+        &self,
+        first: InodeAwareOffset,
+        second: InodeAwareOffset,
+    ) -> Option<Ordering> {
+        let first_index = self.get_item_index_by_inode(first.inode)?;
+        let second_index = self.get_item_index_by_inode(second.inode)?;
+        if first_index == second_index {
+            return Some(first.offset.cmp(&second.offset));
+        }
+        Some(first_index.cmp(&second_index))
     }
 }
 
