@@ -1,6 +1,9 @@
 use std::io::{self, BufRead, Read, Seek, SeekFrom};
 
-/// Structure that provides seeking and reading in a sequence of underlying readables
+/// Structure that provides seeking and reading in a sequence of underlying readables.
+///
+/// **Note**: all readers except for the last one **MUST** have constant size so that we can rely on offsets for indexing across them.
+/// This will be true for the case of reading logrotated files.
 ///
 /// ## Usage
 ///
@@ -20,7 +23,7 @@ use std::io::{self, BufRead, Read, Seek, SeekFrom};
 /// # Ok::<(), std::io::Error>(())
 /// ```
 ///
-/// Multireader allows seeking inside multiple underlying items as if you only had one big buffer
+/// Multireader allows seeking inside multiple underlying items as if you only had one big buffer.
 /// ```rust
 /// # use std::io::{Cursor, Read, SeekFrom, Seek};
 /// # use filetrack::Multireader;
@@ -42,9 +45,9 @@ pub struct Multireader<R: Seek> {
 }
 
 impl<R: Seek> Multireader<R> {
-    /// Create a Multireader from a nonempty collection of readers
+    /// Create a Multireader from a nonempty collection of readers.
     ///
-    /// This function returns io::Result because it will use seek to determine sizes which can fail
+    /// This function returns io::Result because it will use seek to determine sizes which can fail.
     pub fn new(mut items: Vec<R>) -> io::Result<Self> {
         assert_ne!(
             items.len(),
@@ -62,12 +65,12 @@ impl<R: Seek> Multireader<R> {
         })
     }
 
-    /// Offset amoung all underlying items
+    /// Offset amoung all underlying items.
     pub fn get_global_offset(&self) -> u64 {
         self.global_offset
     }
 
-    /// Offset inside current item
+    /// Offset inside current item.
     pub fn get_local_offset(&self) -> u64 {
         let item_index = self.get_current_item_index();
         if item_index == 0 {
@@ -76,14 +79,14 @@ impl<R: Seek> Multireader<R> {
         self.global_offset - self.offsets[item_index - 1]
     }
 
-    //we do not have is_empty because, well, this reader cannot be empty
+    //we do not have is_empty because, well, this reader cannot be empty.
     #[allow(clippy::len_without_is_empty)]
-    /// Number of underlying items
+    /// Number of underlying items.
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
-    /// index of an item that is currently read
+    /// index of an item that is currently read.
     pub fn get_current_item_index(&self) -> usize {
         let mut rightmost_index = 0;
         for &item in &self.offsets {
@@ -96,15 +99,15 @@ impl<R: Seek> Multireader<R> {
         rightmost_index
     }
 
-    /// Destroy the struct and return underlying readers
+    /// Destroy the struct and return underlying readers.
     pub fn into_inner(self) -> Vec<R> {
         self.items
     }
 
-    /// Get total size of underlying items
+    /// Get total size of underlying items.
     ///
     /// Computes total size of underlying items. This method requires mut ref and returns io::Result
-    /// because we need to seek inside last item to determine its size at the moment of call
+    /// because we need to seek inside last item to determine its size at the moment of call.
     pub fn get_total_size(&mut self) -> io::Result<u64> {
         let pre_last_total = self.offsets.last().cloned().unwrap_or_default();
         let last = self.get_last_item_size()?;
@@ -116,15 +119,16 @@ impl<R: Seek> Multireader<R> {
         &mut self.items[index]
     }
 
-    /// Seek current underlying reader properly updating any internal state
+    /// Seek current underlying reader properly updating any internal state.
     ///
-    /// Returns current local offset after seek
+    /// Returns current local offset after seek.
     pub fn seek_current_item(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let local_offset = self.get_current_item().seek(pos)?;
         self.global_offset = self.get_bytes_before_current_item() + local_offset;
         Ok(local_offset)
     }
 
+    /// Perform seek to 0 offset in item identified by `item_index`.
     pub fn seek_to_item_start(&mut self, item_index: usize) -> io::Result<u64> {
         if item_index == 0 {
             self.seek(SeekFrom::Start(0))
@@ -133,7 +137,7 @@ impl<R: Seek> Multireader<R> {
         }
     }
 
-    /// Seek globally by providing local `pos` inside item at index `item_index`
+    /// Seek globally by providing local `pos` inside item at index `item_index`.
     ///
     /// Provided `pos` must be inside indexed item. Returns current local offset.
     pub fn seek_by_local_index(&mut self, item_index: usize, pos: SeekFrom) -> io::Result<u64> {
@@ -141,9 +145,9 @@ impl<R: Seek> Multireader<R> {
         self.seek_current_item(pos)
     }
 
-    /// Returns item size of item. If it is last, returns None instead
+    /// Returns item size of item. If it is last, returns None instead.
     ///
-    /// To determine size of last item, use get_last_item_size
+    /// To determine size of last item, use get_last_item_size.
     pub fn get_current_item_size(&self) -> Option<u64> {
         let current_index = self.get_current_item_index();
         if current_index == self.len() - 1 {
@@ -154,7 +158,7 @@ impl<R: Seek> Multireader<R> {
         Some(next_item_start - self.get_bytes_before_current_item())
     }
 
-    /// Computes global offset from which current item starts
+    /// Computes global offset from which current item starts.
     pub fn get_bytes_before_current_item(&self) -> u64 {
         if self.get_current_item_index() == 0 {
             return 0;
@@ -162,9 +166,9 @@ impl<R: Seek> Multireader<R> {
         self.offsets[self.get_current_item_index() - 1]
     }
 
-    /// Computes last item size
+    /// Computes last item size.
     ///
-    /// Last file in this reader may still be written into, so this number may soon become invalid
+    /// Last file in this reader may still be written into, so this number may soon become invalid.
     pub fn get_last_item_size(&mut self) -> io::Result<u64> {
         let last_item = self.items.last_mut().unwrap();
         let original_offset = last_item.stream_position()?;
