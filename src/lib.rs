@@ -56,6 +56,7 @@
 
 mod inode_aware;
 mod multireader;
+/// A collection of utility functions for working with paths and filesystem
 pub mod path_utils;
 mod tracked_reader;
 
