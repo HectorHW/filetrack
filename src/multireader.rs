@@ -2,6 +2,9 @@ use std::io::{self, BufRead, Read, Seek, SeekFrom};
 
 /// Structure that provides seeking and reading in a sequence of underlying readables.
 ///
+/// **Note**: all readers except for the last one **MUST** have constant size so that we can rely on offsets for indexing across them.
+/// This will be true for the case of reading logrotated files.
+///
 /// ## Usage
 ///
 /// Create a Multireader from a collection of items. Items are required to implement `Seek`, and must additionally support Read
@@ -125,6 +128,7 @@ impl<R: Seek> Multireader<R> {
         Ok(local_offset)
     }
 
+    /// Perform seek to 0 offset in item identified by `item_index`.
     pub fn seek_to_item_start(&mut self, item_index: usize) -> io::Result<u64> {
         if item_index == 0 {
             self.seek(SeekFrom::Start(0))
