@@ -1,5 +1,10 @@
 # Filetrack
 
+[![Rust](https://github.com/HectorHW/filetrack/workflows/Rust/badge.svg)](https://github.com/HectorHW/filetrack/actions)
+[![Latest version](https://img.shields.io/crates/v/filetrack.svg)](https://crates.io/crates/filetrack)
+[![Documentation](https://docs.rs/filetrack/badge.svg)](https://docs.rs/filetrack)
+![License](https://img.shields.io/crates/l/filetrack.svg)
+
 Filetrack is a library for persistent reading of logs similar to the mechanisms used in Filebeat and other software alike.
 It provides a few useful primitives for working with IO and its main intention is to be used for implementation of custom log processors.
 
