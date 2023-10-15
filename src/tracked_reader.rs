@@ -48,7 +48,7 @@ impl State {
     }
 }
 
-/// Structure that implements `Read`, `ReadBuf` and `Seek` while working with persistent offset in up to two underlying logrotated files.
+/// Structure that implements `Read`, `ReadBuf` and `Seek` while working with persistent offset in underlying logrotated files.
 /// External file is used to persist offset across restarts.
 ///
 /// ## Usage
