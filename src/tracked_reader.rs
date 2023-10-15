@@ -58,15 +58,20 @@ impl State {
 /// limited `Seek` implementation is provided (see Limitations for more info).
 ///
 /// ```rust no_run
-/// # use std::io::BufRead;
 /// # use filetrack::{TrackedReader, TrackedReaderError};
+/// # use std::io::BufRead;
+///
+/// // running this script will fetch and print new lines on each execution
+/// # fn main() -> Result<(), TrackedReaderError> {
 /// let mut reader = TrackedReader::new("examples/file.txt", "examples/registry")?;
-/// # let mut input = String::new();
-/// match reader.read_line(&mut input)? {
-///     0 => println!("reached end of file"),
-///     _ => println!("read line: `{}`", input.trim_end()),
-/// };
-/// # Ok::<(), TrackedReaderError>(())
+/// let mut input = String::new();
+/// loop {
+///     match reader.read_line(&mut input)? {
+///         0 => break Ok(()),
+///         _ => println!("read line: `{}`", input.trim_end()),
+///     };
+/// }
+/// # }
 /// ```
 ///
 /// ## Cleanup

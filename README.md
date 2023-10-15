@@ -16,4 +16,25 @@ to be implemented by user.
 * `TrackedReader` that allows to read logs or any other content from rotated files with offset persisted across restarts inside a file
 in case you want a ready-to-use structure.
 
-See [documentation](https://docs.rs/filetrack/latest/filetrack/) for examples and working principles.
+## Example
+
+Read a file line-by-line keeping track
+
+```rust
+use filetrack::{TrackedReader, TrackedReaderError};
+use std::io::BufRead;
+
+// running this script will fetch and print new lines on each execution
+fn main() -> Result<(), TrackedReaderError> {
+    let mut reader = TrackedReader::new("examples/file.txt", "examples/registry")?;
+    let mut input = String::new();
+    loop {
+        match reader.read_line(&mut input)? {
+            0 => break Ok(()),
+            _ => println!("read line: `{}`", input.trim_end()),
+        };
+    }
+}
+```
+
+See [documentation](https://docs.rs/filetrack/latest/filetrack/) for more examples and working principles.
