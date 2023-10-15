@@ -17,7 +17,7 @@ pub struct InodeAwareOffset {
     pub offset: u64,
 }
 
-/// Reader that keeps track of what inode it reads from
+/// Reader that keeps track of what inode it reads from.
 ///
 /// This reader supports persistent indexing using `InodeAwareOffset`. It allows easy persistent reading of rotated logs.
 /// Scheme of persistent is to be implemented by user. For a ready-to-use recipe with simple file storage see `TrackedReader`.
@@ -43,12 +43,12 @@ pub struct InodeAwareReader {
 }
 
 impl InodeAwareReader {
-    /// Construct `InodeAwareMultireader` searching for up to two rotated logs
+    /// Construct `InodeAwareMultireader` searching for up to two rotated logs.
     pub fn from_rotated_logs(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::from_rotated_logs_with_depth(path, 2)
     }
 
-    /// Construct `InodeAwareMultireader` searching for up to `max_depth` rotated logs
+    /// Construct `InodeAwareMultireader` searching for up to `max_depth` rotated logs.
     pub fn from_rotated_logs_with_depth(
         path: impl AsRef<Path>,
         max_depth: usize,
@@ -67,16 +67,16 @@ impl InodeAwareReader {
         })
     }
 
-    /// Get offset that can be used across restarts and log rotations
+    /// Get offset that can be used across restarts and log rotations.
     pub fn get_persistent_offset(&self) -> InodeAwareOffset {
         let inode = self.get_current_inode();
         let offset = self.get_local_offset();
         InodeAwareOffset { inode, offset }
     }
 
-    /// Seek by persistent offset
+    /// Seek by persistent offset.
     ///
-    /// Will return NotFound if inode does not exist
+    /// Will return NotFound io error if file with given inode was not found.
     pub fn seek_persistent(&mut self, offset: InodeAwareOffset) -> io::Result<()> {
         let Some(inode_index) = self.get_item_index_by_inode(offset.inode) else {
             return Err(io::Error::new(
@@ -88,23 +88,23 @@ impl InodeAwareReader {
         Ok(())
     }
 
-    /// Get slice of inodes for current execution
+    /// Get slice of inodes for current execution.
     pub fn get_inodes(&self) -> &[u64] {
         &self.inodes
     }
 
-    // Destroy struct and return underlying reader and inodes
+    // Destroy struct and return underlying reader and inodes.
     pub fn into_inner(self) -> (Multireader<BufReader<File>>, Vec<u64>) {
         (self.inner, self.inodes)
     }
 
-    /// Get inode of an item that is currently read
+    /// Get inode of an item that is currently read.
     pub fn get_current_inode(&self) -> u64 {
         let item_index = self.get_current_item_index();
         self.inodes[item_index]
     }
 
-    /// Search for item index by given inode
+    /// Search for item index by given inode.
     pub fn get_item_index_by_inode(&self, inode: u64) -> Option<usize> {
         self.get_inodes()
             .iter()
@@ -115,7 +115,7 @@ impl InodeAwareReader {
     }
 
     /// Compare two offsets as if they were pointing into one large buffer. Returns None if any of the offsets do not belong
-    /// to underlying files
+    /// to underlying files.
     pub fn compare_offsets(
         &self,
         first: InodeAwareOffset,

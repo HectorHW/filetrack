@@ -4,9 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Search for logfile and its rotated versions as `path`, `path.1`, `path.2` and so on
+/// Search for logfile and its rotated versions as `path`, `path.1`, `path.2` and so on.
 ///
-/// Returns pairs of path and inode
+/// Returns pairs of path and inode.
 pub fn glob_rotated_logs(
     path: impl AsRef<Path>,
     max_depth: usize,
@@ -29,13 +29,13 @@ pub fn glob_rotated_logs(
     Ok(result)
 }
 
-/// Ask the filesystem for metadata and return inode for fs object specified by `path`
+/// Ask the filesystem for metadata and return inode for fs object specified by `path`.
 pub fn get_inode_by_path(path: impl AsRef<Path>) -> io::Result<u64> {
     let metadata = std::fs::metadata(&path)?;
     Ok(metadata.ino())
 }
 
-/// Add extension to existing PathBuf
+/// Add extension to existing PathBuf.
 ///
 /// ## Example
 ///

@@ -10,13 +10,13 @@ use thiserror::Error;
 
 use crate::inode_aware::{InodeAwareOffset, InodeAwareReader};
 
-/// Structure used by `TrackedReader` for simple file persistence
+/// Structure used by `TrackedReader` for simple file persistence.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct State {
     pub offset: InodeAwareOffset,
 }
 
-/// Possible errors that could happen while working with persistent state storage
+/// Possible errors that could happen while working with persistent state storage.
 #[derive(Error, Debug)]
 pub enum StateSerdeError {
     #[error("while working with underlying file")]
@@ -106,7 +106,7 @@ pub struct TrackedReader {
     already_freed: bool,
 }
 
-/// Possible errors that could happen while working with `TrackedReader`
+/// Possible errors that could happen while working with `TrackedReader`.
 #[derive(Error, Debug)]
 pub enum TrackedReaderError {
     #[error("while working with underlying file")]
@@ -123,8 +123,8 @@ impl TrackedReader {
     ///
     /// # Arguments
     ///
-    /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`
-    /// * `registry` - path to registry file used to persist offset and other metadata
+    /// * `filepath` - a path to log file to be read. `TrackedReader` will additionally search for logrotated file under `{filepath}.1`.
+    /// * `registry` - path to registry file used to persist offset and other metadata.
     pub fn new(
         filepath: impl AsRef<Path>,
         registry: impl AsRef<Path>,
@@ -132,9 +132,9 @@ impl TrackedReader {
         Self::with_search_depth(filepath, registry, 1)
     }
 
-    /// Like `::new` but allows specifying how many rotated items to check
+    /// Like `::new` but allows specifying how many rotated items to check.
     ///
-    /// `search_depth` of 2 means that apart from log file we will check for log.1 and log.2
+    /// `search_depth` of 2 means that apart from `log` file we will check for `log.1` and `log.2`.
     pub fn with_search_depth(
         filepath: impl AsRef<Path>,
         registry: impl AsRef<Path>,
@@ -160,7 +160,7 @@ impl TrackedReader {
         Ok(reader)
     }
 
-    /// Explicitly save current state into registry file and return any errors generated
+    /// Explicitly save current state into registry file and return any errors generated.
     pub fn persist(&mut self) -> std::io::Result<()> {
         self.get_persistent_state().persist(&mut self.registry)
     }
@@ -172,7 +172,7 @@ impl TrackedReader {
         Ok(())
     }
 
-    /// Get current state for possible manual handling
+    /// Get current state for possible manual handling.
     pub fn get_persistent_state(&self) -> State {
         State {
             offset: self.get_persistent_offset(),

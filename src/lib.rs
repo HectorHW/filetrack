@@ -3,7 +3,7 @@
 //! Filetrack is a library for persistent reading of logs similar to the mechanisms used in Filebeat and other software alike.
 //! It provides a few useful primitives for working with IO and its main intention is to be used for implementation of custom log processors.
 //!
-//! * `Multireader` that lets you work with a list of readers as if you had one single buffer
+//! * `Multireader` that lets you work with a list of readers as if you had one single buffer.
 //!
 //! ```rust
 //! # use std::io::{Cursor, Read};
@@ -56,7 +56,7 @@
 
 mod inode_aware;
 mod multireader;
-/// A collection of utility functions for working with paths and filesystem
+/// A collection of utility functions for working with paths and filesystem.
 pub mod path_utils;
 mod tracked_reader;
 
